@@ -2,10 +2,11 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <vector>
+#include <DirectXMath.h>
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
 
-
+using namespace DirectX;
 
 class DirectGraphics
 {
@@ -37,6 +38,10 @@ private:
 	bool CreateFence();
 	bool SetupSwapChain();
 
+	bool CreateVertexBuffer();
+	bool CreateShader();
+	bool CreateInputLayout();
+
 private:
 	ID3D12Device* m_device;
 	IDXGIFactory6* m_dxgiFactory;
@@ -49,4 +54,8 @@ private:
 	std::vector<ID3D12Resource*> m_backBuffers;
 	ID3D12Fence* m_fence;
 	UINT64 m_fenceVal;
+
+	ID3D12Resource* m_vertBuff; // 頂点バッファ
+	D3D12_VERTEX_BUFFER_VIEW m_vbView;// 頂点バッファビュー
+
 };

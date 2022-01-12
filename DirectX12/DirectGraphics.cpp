@@ -2,11 +2,20 @@
 #include <string>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <d3dcompiler.h>
 
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
+#pragma comment(lib,"d3dcompiler.lib")
 
 D3D12_RESOURCE_BARRIER BarrierDesc = {};
+
+XMFLOAT3 vertices[] =
+{
+	{-1.0f,-1.0f,0.0f},// 左下
+	{-1.0f,1.0f,0.0f}, // 左上
+	{1.0f,-1.0f,0.0f}, // 右下
+};
 
 DirectGraphics::DirectGraphics(): 
 	m_device(nullptr),
@@ -18,9 +27,10 @@ DirectGraphics::DirectGraphics():
 	m_rtvHeaps(nullptr),
 	m_backBuffers(),
 	m_fence(nullptr),
-	m_fenceVal(0)
+	m_fenceVal(0),
+	m_vertBuff(nullptr)
 {
-
+	
 };
 
 
@@ -54,6 +64,21 @@ bool DirectGraphics::Init(HWND& hwnd)
 	CreateRenderTargetView();
 
 	if (CreateFence() == false)
+	{
+		return false;
+	}
+
+	if (CreateVertexBuffer() == false)
+	{
+		return false;
+	}
+
+	if (CreateShader() == false)
+	{
+		return false;
+	}
+
+	if (CreateInputLayout() == false)
 	{
 		return false;
 	}
@@ -355,4 +380,116 @@ bool DirectGraphics::CreateFence()
 			return false;
 		}
 	}
+}
+
+bool DirectGraphics::CreateVertexBuffer()
+{
+	// 頂点の大きさ分の空きをメモリに作ってあげるんだぞ！
+
+	D3D12_HEAP_PROPERTIES heapprop = {};
+
+	heapprop.Type = D3D12_HEAP_TYPE_UPLOAD;
+	heapprop.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	heapprop.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+
+	D3D12_RESOURCE_DESC resdesc = {};
+
+	resdesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	resdesc.Width = sizeof(vertices);
+	resdesc.Height = 1;
+	resdesc.DepthOrArraySize = 1;
+	resdesc.MipLevels = 1;
+	resdesc.Format = DXGI_FORMAT_UNKNOWN;
+	resdesc.SampleDesc.Count = 1;
+	resdesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+	resdesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	if (FAILED(m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resdesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_vertBuff))))
+	{
+		return false;
+	}
+
+	XMFLOAT3* vertMap = nullptr;
+
+	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))
+	{
+		return false;
+	}
+
+	std::copy(std::begin(vertices), std::end(vertices), vertMap);
+
+	m_vertBuff->Unmap(0, nullptr);
+
+	m_vbView = {};
+
+	m_vbView.BufferLocation = m_vertBuff->GetGPUVirtualAddress(); // バッファの仮想アドレス
+	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
+	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
+
+	return true;
+}
+
+bool DirectGraphics::CreateShader()
+{
+	ID3DBlob* vsBlob = nullptr;
+	ID3DBlob* psBlob = nullptr;
+
+	ID3DBlob* errorBlob = nullptr;
+
+	// vertexShaderのコンパイル
+	auto result = 
+		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vsBlob, &errorBlob);
+	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+	{
+		::OutputDebugStringA("ファイルが見当たりません");
+		return 0;
+	}
+	else
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(),errorBlob->GetBufferSize(),errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+
+	}
+	
+	// pixelShaderのコンパイル
+	result = 
+		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicPS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vsBlob, &errorBlob);
+	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+	{
+		::OutputDebugStringA("ファイルが見当たりません");
+		return 0;
+	}
+	else
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+
+	}
+}
+
+bool CreateInputLayout()
+{
+	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
+	{
+		{
+			"POSITION",									// セマンティクス
+			0,
+			DXGI_FORMAT_R32G32B32A32_FLOAT,				// フォーマット
+			0,											// 入力スロットインデックス
+			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
+	};
 }
