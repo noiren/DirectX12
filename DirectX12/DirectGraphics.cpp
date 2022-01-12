@@ -1,0 +1,358 @@
+#include "DirectGraphics.h"
+#include <string>
+#include <d3d12.h>
+#include <dxgi1_6.h>
+
+#pragma comment(lib,"d3d12.lib")
+#pragma comment(lib,"dxgi.lib")
+
+D3D12_RESOURCE_BARRIER BarrierDesc = {};
+
+DirectGraphics::DirectGraphics(): 
+	m_device(nullptr),
+	m_dxgiFactory(nullptr),
+	m_swapChain(nullptr),
+	m_cmdAllocator(nullptr),
+	m_cmdList(nullptr),
+	m_cmdQueue(nullptr),
+	m_rtvHeaps(nullptr),
+	m_backBuffers(),
+	m_fence(nullptr),
+	m_fenceVal(0)
+{
+
+};
+
+
+bool DirectGraphics::Init(HWND& hwnd)
+{
+	if (CreateDevice() == false)
+	{
+		return false;
+	}
+
+	if (CreateCommand() == false)
+	{
+		return false;
+	}
+
+	if (CreateCommandQueue() == false)
+	{
+		return false;
+	}
+
+	if (CreateSwapChain(hwnd) == false)
+	{
+		return false;
+	}
+
+	if (CreateDiscriptorHeap() == false)
+	{
+		return false;
+	}
+
+	CreateRenderTargetView();
+
+	if (CreateFence() == false)
+	{
+		return false;
+	}
+
+	if (SetupSwapChain() == false)
+	{
+		return false;
+	}
+
+	Render();
+
+	return true;
+}
+
+
+void DirectGraphics::Release()
+{
+	delete(m_rtvHeaps);	
+	delete(m_cmdQueue);
+	delete(m_cmdList);
+	delete(m_cmdAllocator);
+	delete(m_swapChain);
+	delete(m_dxgiFactory);
+	delete(m_device);
+}
+
+bool DirectGraphics::CreateDevice()
+{
+	auto result = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
+
+	std::vector<IDXGIAdapter*> adapters;
+
+	IDXGIAdapter* tmpAdapter = nullptr;
+
+	// 利用可能なアダプターの列挙を行う
+	for (int i = 0; m_dxgiFactory->EnumAdapters(i, &tmpAdapter) != DXGI_ERROR_NOT_FOUND; ++i)
+	{
+		adapters.push_back(tmpAdapter);
+	}
+
+	for (auto adpt : adapters)
+	{
+		DXGI_ADAPTER_DESC adesc = {};
+		adpt->GetDesc(&adesc);
+
+		std::wstring strDesc = adesc.Description;
+
+		// 探したいアダプターの名前を確認
+		if (strDesc.find(L"NVIDIA") != std::string::npos)
+		{
+			tmpAdapter = adpt;
+			break;
+		}
+	}
+
+	if (tmpAdapter == nullptr)
+	{
+		return false;
+	}
+
+	D3D_FEATURE_LEVEL levels[] =
+	{
+		D3D_FEATURE_LEVEL_12_1,
+		D3D_FEATURE_LEVEL_12_0,
+		D3D_FEATURE_LEVEL_11_1,
+		D3D_FEATURE_LEVEL_11_0,
+	};
+
+	D3D_FEATURE_LEVEL featureLevel;
+
+	for (auto lv : levels)
+	{
+		if (D3D12CreateDevice(tmpAdapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&m_device)) == S_OK)
+		{
+			featureLevel = lv;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool DirectGraphics::CreateCommand()
+{
+	if (m_device != nullptr)
+	{
+		if (m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAllocator)) == S_OK &&
+			m_device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,m_cmdAllocator,nullptr,IID_PPV_ARGS(&m_cmdList)) == S_OK)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool DirectGraphics::CreateCommandQueue()
+{
+	D3D12_COMMAND_QUEUE_DESC cmdQueueDesc = {};
+
+	cmdQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+	cmdQueueDesc.NodeMask = 0;
+
+	cmdQueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+
+	cmdQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+	if (m_device->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&m_cmdQueue)) == S_OK)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+bool DirectGraphics::CreateSwapChain(HWND& hwnd)
+{
+	// スワップチェーン関連の設定を行う
+	DXGI_SWAP_CHAIN_DESC1 swapchainDesc = {};
+
+	swapchainDesc.Width = 900;
+	swapchainDesc.Height = 900;
+	swapchainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	swapchainDesc.Stereo = false;
+	swapchainDesc.SampleDesc.Count = 1;
+	swapchainDesc.SampleDesc.Quality = 0;
+	swapchainDesc.BufferUsage = DXGI_USAGE_BACK_BUFFER;
+	swapchainDesc.BufferCount = 2;
+
+	swapchainDesc.Scaling = DXGI_SCALING_STRETCH;
+
+	swapchainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
+	swapchainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+
+	swapchainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+
+	if (m_dxgiFactory->CreateSwapChainForHwnd(
+		m_cmdQueue,
+		hwnd,
+		&swapchainDesc,
+		nullptr,
+		nullptr,
+		(IDXGISwapChain1**)&m_swapChain
+	) == S_OK)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+bool DirectGraphics::CreateDiscriptorHeap()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+
+	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; // ビューのタイプを設定 今回はレンダーターゲットビュー
+	heapDesc.NodeMask = 0;
+	heapDesc.NumDescriptors = 2;// ディスクリプタは表・裏の二つ
+	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+	if (m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_rtvHeaps)) == S_OK)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+void DirectGraphics::CreateRenderTargetView()
+{
+	DXGI_SWAP_CHAIN_DESC swcDesc = {};
+
+	auto result = m_swapChain->GetDesc(&swcDesc);
+
+	m_backBuffers.clear();// 一応初期化
+
+	m_backBuffers.reserve(swcDesc.BufferCount);
+
+	for (int idx = 0; idx < swcDesc.BufferCount; ++idx)
+	{
+		m_backBuffers.emplace_back(nullptr);
+
+		m_swapChain->GetBuffer(idx,IID_PPV_ARGS(&m_backBuffers[idx]));
+
+		D3D12_CPU_DESCRIPTOR_HANDLE handle = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
+		handle.ptr += idx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);// ここの分だけずらして取得
+
+		m_device->CreateRenderTargetView(m_backBuffers[idx], nullptr, handle);
+	}
+}
+
+bool DirectGraphics::ResetCommandAllocator()
+{
+	if (m_cmdAllocator->Reset() == S_OK)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+bool DirectGraphics::SetupSwapChain()
+{
+	auto bbIdx = m_swapChain->GetCurrentBackBufferIndex(); // 0か1が帰ってくる
+
+	if (bbIdx > 2)
+	{
+		return false;
+	}
+
+	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
+
+	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; // 遷移
+	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;	   // 特に指定なし
+	BarrierDesc.Transition.pResource = m_backBuffers[bbIdx];   // バックバッファーリソース
+	BarrierDesc.Transition.Subresource = 0;
+
+	BarrierDesc.Transition.StateBefore
+		= D3D12_RESOURCE_STATE_PRESENT;			// 直前はPRESENT状態
+
+	BarrierDesc.Transition.StateAfter
+		= D3D12_RESOURCE_STATE_RENDER_TARGET;	// 今からレンダーターゲット状態
+
+	m_cmdList->ResourceBarrier(1, &BarrierDesc);
+
+	m_cmdList->OMSetRenderTargets(1, &rtvH, true, nullptr);
+
+	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
+
+	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr);
+
+	// コマンドリストの実行
+	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+	m_cmdList->ResourceBarrier(1, &BarrierDesc);
+
+	m_cmdList->Close(); // 実行前には必ずクローズすること！
+
+	ID3D12CommandList* cmdLists[] = { m_cmdList };
+	m_cmdQueue->ExecuteCommandLists(1, cmdLists);
+
+	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+
+	if (m_fence->GetCompletedValue() != m_fenceVal)
+	{
+		auto event = CreateEvent(nullptr, false, false, nullptr);
+
+		m_fence->SetEventOnCompletion(m_fenceVal, event);
+
+		WaitForSingleObject(event, INFINITE);
+
+		CloseHandle(event);
+	}
+
+	m_cmdAllocator->Reset();
+	m_cmdList->Reset(m_cmdAllocator, nullptr);
+
+	return true;
+}
+
+void DirectGraphics::Render()
+{
+	m_swapChain->Present(1, 0);
+}
+
+void DirectGraphics::EnableDebugLayer()
+{
+	ID3D12Debug* debugLayer = nullptr;
+	auto result = D3D12GetDebugInterface(IID_PPV_ARGS(&debugLayer));
+
+	debugLayer->EnableDebugLayer();
+	debugLayer->Release();
+}
+
+bool DirectGraphics::CreateFence()
+{
+	if (m_fence == nullptr)
+	{
+		m_fenceVal = 0;
+
+		auto result = m_device->CreateFence(m_fenceVal, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+
+		if (result == S_OK)
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+}
