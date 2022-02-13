@@ -42,6 +42,8 @@ private:
 	bool CreateShader();
 	bool CreateInputLayout();
 
+	void setViewPort();
+
 private:
 	ID3D12Device* m_device;
 	IDXGIFactory6* m_dxgiFactory;
@@ -55,7 +57,16 @@ private:
 	ID3D12Fence* m_fence;
 	UINT64 m_fenceVal;
 
+	ID3DBlob* m_pVsShader;
+	ID3DBlob* m_pPsShader;
+
 	ID3D12Resource* m_vertBuff; // 頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW m_vbView;// 頂点バッファビュー
 
+	ID3D12PipelineState* m_pPipelineState;
+
+	ID3D12RootSignature* m_pRootSignature;
+
+	D3D12_VIEWPORT m_viewport;
+	D3D12_RECT m_scissorrect;
 };

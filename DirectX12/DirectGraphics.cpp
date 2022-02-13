@@ -10,6 +10,12 @@
 
 D3D12_RESOURCE_BARRIER BarrierDesc = {};
 
+namespace {
+	const float WINDOW_WIDTH = 900.f;
+	const float WINDOW_HEIGHT = 900.f;
+}
+
+
 XMFLOAT3 vertices[] =
 {
 	{-1.0f,-1.0f,0.0f},// 左下
@@ -28,7 +34,14 @@ DirectGraphics::DirectGraphics():
 	m_backBuffers(),
 	m_fence(nullptr),
 	m_fenceVal(0),
-	m_vertBuff(nullptr)
+	m_pVsShader(nullptr),
+	m_pPsShader(nullptr),
+	m_vertBuff(nullptr),
+	m_vbView(),
+	m_pPipelineState(nullptr),
+	m_pRootSignature(nullptr),
+	m_viewport(),
+	m_scissorrect()
 {
 	
 };
@@ -83,15 +96,11 @@ bool DirectGraphics::Init(HWND& hwnd)
 		return false;
 	}
 
-	if (SetupSwapChain() == false)
-	{
-		return false;
-	}
-
-	Render();
-
+	setViewPort();
 	return true;
 }
+
+
 
 
 void DirectGraphics::Release()
@@ -200,8 +209,8 @@ bool DirectGraphics::CreateSwapChain(HWND& hwnd)
 	// スワップチェーン関連の設定を行う
 	DXGI_SWAP_CHAIN_DESC1 swapchainDesc = {};
 
-	swapchainDesc.Width = 900;
-	swapchainDesc.Height = 900;
+	swapchainDesc.Width = WINDOW_WIDTH;
+	swapchainDesc.Height = WINDOW_HEIGHT;
 	swapchainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	swapchainDesc.Stereo = false;
 	swapchainDesc.SampleDesc.Count = 1;
@@ -297,10 +306,6 @@ bool DirectGraphics::SetupSwapChain()
 		return false;
 	}
 
-	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
-
-	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
 	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; // 遷移
 	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;	   // 特に指定なし
 	BarrierDesc.Transition.pResource = m_backBuffers[bbIdx];   // バックバッファーリソース
@@ -314,11 +319,29 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->ResourceBarrier(1, &BarrierDesc);
 
+	m_cmdList->SetPipelineState(m_pPipelineState); // パイプラインステートの設定
+
+	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
+
+	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
 	m_cmdList->OMSetRenderTargets(1, &rtvH, true, nullptr);
 
 	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
 
-	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr);
+	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
+
+	m_cmdList->RSSetViewports(1, &m_viewport);
+
+	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
+
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); // ルートシグネチャの設定
+
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
+
+	m_cmdList->DrawInstanced(3, 1, 0, 0);
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -351,6 +374,10 @@ bool DirectGraphics::SetupSwapChain()
 
 void DirectGraphics::Render()
 {
+	if (SetupSwapChain() == false)
+	{
+		return;
+	}
 	m_swapChain->Present(1, 0);
 }
 
@@ -432,20 +459,17 @@ bool DirectGraphics::CreateVertexBuffer()
 
 bool DirectGraphics::CreateShader()
 {
-	ID3DBlob* vsBlob = nullptr;
-	ID3DBlob* psBlob = nullptr;
-
 	ID3DBlob* errorBlob = nullptr;
 
 	// vertexShaderのコンパイル
 	auto result = 
-		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vsBlob, &errorBlob);
+		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &m_pVsShader, &errorBlob);
 	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 	{
 		::OutputDebugStringA("ファイルが見当たりません");
 		return 0;
 	}
-	else
+	else if(result != S_OK)
 	{
 		// エラーメッセージ表示
 		std::string errstr;
@@ -454,18 +478,17 @@ bool DirectGraphics::CreateShader()
 		errstr += "\n";
 		::OutputDebugStringA(errstr.c_str());
 		return false;
-
 	}
 	
 	// pixelShaderのコンパイル
 	result = 
-		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicPS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vsBlob, &errorBlob);
+		D3DCompileFromFile(L"BasicPixelShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicPS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &m_pPsShader, &errorBlob);
 	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 	{
 		::OutputDebugStringA("ファイルが見当たりません");
 		return 0;
 	}
-	else
+	else if(result != S_OK)
 	{
 		// エラーメッセージ表示
 		std::string errstr;
@@ -478,18 +501,123 @@ bool DirectGraphics::CreateShader()
 	}
 }
 
-bool CreateInputLayout()
+bool DirectGraphics::CreateInputLayout()
 {
+
+
 	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
 	{
 		{
 			"POSITION",									// セマンティクス
 			0,
-			DXGI_FORMAT_R32G32B32A32_FLOAT,				// フォーマット
+			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
 			0,											// 入力スロットインデックス
 			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
 			0
 		},
 	};
+
+	// ここでグラフィックスパイプラインステートも作っちゃう！
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC gpipeline = {};
+
+	// 頂点シェーダーとピクセルシェーダーを設定
+	gpipeline.VS.pShaderBytecode = m_pVsShader->GetBufferPointer();
+	gpipeline.VS.BytecodeLength = m_pVsShader->GetBufferSize();
+	gpipeline.PS.pShaderBytecode = m_pPsShader->GetBufferPointer();
+	gpipeline.PS.BytecodeLength = m_pPsShader->GetBufferSize();
+
+	// サンプルマスク・ラスタライザーの設定
+	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK; // よくわからん
+	
+	gpipeline.RasterizerState.MultisampleEnable = false;
+
+	gpipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // カリングしない
+	gpipeline.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; // 中身の塗りつぶし
+	gpipeline.RasterizerState.DepthClipEnable = true; // 深度方向のクリッピングは有効に
+
+
+	// ブレンドステートの設定
+	gpipeline.BlendState.AlphaToCoverageEnable = false;
+	gpipeline.BlendState.IndependentBlendEnable = false;
+
+	D3D12_RENDER_TARGET_BLEND_DESC renderTargetBlendDesc = {};
+	renderTargetBlendDesc.BlendEnable = false;
+	renderTargetBlendDesc.LogicOpEnable = false;
+	renderTargetBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	// 入力レイアウトの設定
+	gpipeline.InputLayout.pInputElementDescs = inputLayout;
+	gpipeline.InputLayout.NumElements = _countof(inputLayout);
+
+	gpipeline.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+
+	gpipeline.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+
+	gpipeline.NumRenderTargets = 1;
+	gpipeline.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+	gpipeline.SampleDesc.Count = 1;
+	gpipeline.SampleDesc.Quality = 0;
+
+	// ルートシグネチャここで作成
+	D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+	rootSignatureDesc.Flags =
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ID3DBlob* rootSigBlob = nullptr; // ルードシグネチャのバイナリコードを作成する
+	ID3DBlob* errorBlob = nullptr;
+
+	auto result = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &rootSigBlob, &errorBlob);
+	if (result != S_OK)
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+	}
+
+	result = m_device->CreateRootSignature(0, rootSigBlob->GetBufferPointer(), rootSigBlob->GetBufferSize(), IID_PPV_ARGS(&m_pRootSignature));
+
+	rootSigBlob->Release();
+
+	gpipeline.pRootSignature = m_pRootSignature;
+
+	result = m_device->CreateGraphicsPipelineState(&gpipeline, IID_PPV_ARGS(&m_pPipelineState));
+
+
+	if (result == S_OK)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+void DirectGraphics::setViewPort()
+{
+	// ビューポート設定
+	m_viewport = {};
+
+	m_viewport.Width = WINDOW_WIDTH;
+	m_viewport.Height = WINDOW_HEIGHT;
+	m_viewport.TopLeftX = 0;
+	m_viewport.TopLeftY = 0;
+	m_viewport.MaxDepth = 1.f;
+	m_viewport.MinDepth = 0.f;
+
+
+	// シザー矩形設定
+	m_scissorrect = {};
+
+	m_scissorrect.top = 0;
+	m_scissorrect.left = 0;
+	m_scissorrect.right = m_scissorrect.left + WINDOW_WIDTH;
+	m_scissorrect.bottom = m_scissorrect.top + WINDOW_HEIGHT;
 }

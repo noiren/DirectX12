@@ -74,7 +74,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
 	graphics->EnableDebugLayer();
 
-	graphics->Init(hwnd);
+	if (graphics->Init(hwnd) == false)
+	{
+		return -1;
+	}
 
 	ShowWindow(hwnd, SW_SHOW);
 
@@ -92,6 +95,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 		{
 			break;
 		}
+
+		graphics->Render();
 	}
 
 	UnregisterClass(w.lpszClassName, w.hInstance);
