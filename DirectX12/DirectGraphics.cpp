@@ -18,9 +18,10 @@ namespace {
 
 XMFLOAT3 vertices[] =
 {
-	{-1.0f,-1.0f,0.0f},// 左下
-	{-1.0f,1.0f,0.0f}, // 左上
-	{1.0f,-1.0f,0.0f}, // 右下
+	{-0.4f,-0.7f,0.0f},
+	{-0.4f,0.7f,0.0f},
+	{0.4f,-0.7f,0.0f},
+	{0.4f,0.7f,0.0f},
 };
 
 DirectGraphics::DirectGraphics(): 
@@ -37,7 +38,9 @@ DirectGraphics::DirectGraphics():
 	m_pVsShader(nullptr),
 	m_pPsShader(nullptr),
 	m_vertBuff(nullptr),
+	m_indexBuff(nullptr),
 	m_vbView(),
+	m_ibView(),
 	m_pPipelineState(nullptr),
 	m_pRootSignature(nullptr),
 	m_viewport(),
@@ -336,11 +339,13 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); // ルートシグネチャの設定
 
-	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
 
-	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
+	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);// 頂点バッファビューの設定
 
-	m_cmdList->DrawInstanced(3, 1, 0, 0);
+	m_cmdList->IASetIndexBuffer(&m_ibView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけだぞ)
+
+	m_cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -431,6 +436,7 @@ bool DirectGraphics::CreateVertexBuffer()
 	resdesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 	resdesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
+	// バッファの確保
 	if (FAILED(m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resdesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_vertBuff))))
 	{
 		return false;
@@ -438,47 +444,47 @@ bool DirectGraphics::CreateVertexBuffer()
 
 	XMFLOAT3* vertMap = nullptr;
 
-	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))
+	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))// 確保したバッファの仮想アドレスを取得する
 	{
 		return false;
 	}
 
-	std::copy(std::begin(vertices), std::end(vertices), vertMap);
+	std::copy(std::begin(vertices), std::end(vertices), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
 
 	m_vertBuff->Unmap(0, nullptr);
 
+	// バッファを作成したらそこに合わせたビューの作成(今回はvertexBufferview)
 	m_vbView = {};
 
 	m_vbView.BufferLocation = m_vertBuff->GetGPUVirtualAddress(); // バッファの仮想アドレス
 	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
 	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
 
-	unsigned short indices[] = { 0,1,2, 2,1,3 };
+	unsigned short indices[] = {
+		0,1,2,
+		2,1,3
+	};
 
-	ID3D12Resource* idxBuff = nullptr;
-	//設定は、バッファのサイズ以外頂点バッファの設定を使いまわして
-	//OKだと思います。
 	resdesc.Width = sizeof(indices);
-	auto result = m_device->CreateCommittedResource(
-		&heapprop,
-		D3D12_HEAP_FLAG_NONE,
-		&resdesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&idxBuff));
+	if (FAILED(m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resdesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_indexBuff))))
+	{
+		return false;
+	}
 
-	//作ったバッファにインデックスデータをコピー
 	unsigned short* mappedIdx = nullptr;
-	idxBuff->Map(0, nullptr, (void**)&mappedIdx);
+	if (FAILED(m_indexBuff->Map(0, nullptr, (void**)&mappedIdx)))
+	{
+		return false;
+	}
+
 	std::copy(std::begin(indices), std::end(indices), mappedIdx);
-	idxBuff->Unmap(0, nullptr);
+	m_indexBuff->Unmap(0, nullptr);
 
-	//インデックスバッファビューを作成
-	D3D12_INDEX_BUFFER_VIEW ibView = {};
-	ibView.BufferLocation = idxBuff->GetGPUVirtualAddress();
-	ibView.Format = DXGI_FORMAT_R16_UINT;
-	ibView.SizeInBytes = sizeof(indices);
+	m_ibView = {};
 
+	m_ibView.BufferLocation = m_indexBuff->GetGPUVirtualAddress();
+	m_ibView.Format = DXGI_FORMAT_R16_UINT;
+	m_ibView.SizeInBytes = sizeof(indices);
 	return true;
 }
 

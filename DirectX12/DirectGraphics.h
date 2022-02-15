@@ -63,6 +63,9 @@ private:
 	ID3D12Resource* m_vertBuff; // 頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW m_vbView;// 頂点バッファビュー
 
+	ID3D12Resource* m_indexBuff;
+	D3D12_INDEX_BUFFER_VIEW m_ibView;
+
 	ID3D12PipelineState* m_pPipelineState;
 
 	ID3D12RootSignature* m_pRootSignature;
