@@ -271,17 +271,16 @@ void DirectGraphics::CreateRenderTargetView()
 	m_backBuffers.clear();// 一応初期化
 
 	m_backBuffers.reserve(swcDesc.BufferCount);
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
 
 	for (int idx = 0; idx < swcDesc.BufferCount; ++idx)
 	{
 		m_backBuffers.emplace_back(nullptr);
-
-		m_swapChain->GetBuffer(idx,IID_PPV_ARGS(&m_backBuffers[idx]));
-
-		D3D12_CPU_DESCRIPTOR_HANDLE handle = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
-		handle.ptr += idx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);// ここの分だけずらして取得
+		m_swapChain->GetBuffer(static_cast<UINT>(idx),IID_PPV_ARGS(&m_backBuffers[idx]));
 
 		m_device->CreateRenderTargetView(m_backBuffers[idx], nullptr, handle);
+
+		handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);// ここの分だけずらして取得
 	}
 }
 
@@ -454,6 +453,32 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
 	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
 
+	unsigned short indices[] = { 0,1,2, 2,1,3 };
+
+	ID3D12Resource* idxBuff = nullptr;
+	//設定は、バッファのサイズ以外頂点バッファの設定を使いまわして
+	//OKだと思います。
+	resdesc.Width = sizeof(indices);
+	auto result = m_device->CreateCommittedResource(
+		&heapprop,
+		D3D12_HEAP_FLAG_NONE,
+		&resdesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&idxBuff));
+
+	//作ったバッファにインデックスデータをコピー
+	unsigned short* mappedIdx = nullptr;
+	idxBuff->Map(0, nullptr, (void**)&mappedIdx);
+	std::copy(std::begin(indices), std::end(indices), mappedIdx);
+	idxBuff->Unmap(0, nullptr);
+
+	//インデックスバッファビューを作成
+	D3D12_INDEX_BUFFER_VIEW ibView = {};
+	ibView.BufferLocation = idxBuff->GetGPUVirtualAddress();
+	ibView.Format = DXGI_FORMAT_R16_UINT;
+	ibView.SizeInBytes = sizeof(indices);
+
 	return true;
 }
 
@@ -532,10 +557,17 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK; // よくわからん
 	
 	gpipeline.RasterizerState.MultisampleEnable = false;
-
 	gpipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // カリングしない
 	gpipeline.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; // 中身の塗りつぶし
 	gpipeline.RasterizerState.DepthClipEnable = true; // 深度方向のクリッピングは有効に
+	//残り
+	gpipeline.RasterizerState.FrontCounterClockwise = false;
+	gpipeline.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+	gpipeline.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+	gpipeline.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+	gpipeline.RasterizerState.AntialiasedLineEnable = false;
+	gpipeline.RasterizerState.ForcedSampleCount = 0;
+	gpipeline.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
 
 
 	// ブレンドステートの設定
@@ -546,6 +578,8 @@ bool DirectGraphics::CreateInputLayout()
 	renderTargetBlendDesc.BlendEnable = false;
 	renderTargetBlendDesc.LogicOpEnable = false;
 	renderTargetBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	gpipeline.BlendState.RenderTarget[0] = renderTargetBlendDesc;
 
 	// 入力レイアウトの設定
 	gpipeline.InputLayout.pInputElementDescs = inputLayout;
