@@ -15,13 +15,14 @@ namespace {
 	const float WINDOW_HEIGHT = 900.f;
 }
 
+std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
 
-XMFLOAT3 vertices[] =
+DirectGraphics::Vertex vertices[] =
 {
-	{-0.4f,-0.7f,0.0f},
-	{-0.4f,0.7f,0.0f},
-	{0.4f,-0.7f,0.0f},
-	{0.4f,0.7f,0.0f},
+	{{-0.4f,-0.7f,0.0f},{0.0f,1.0f}}, // 左下
+	{{-0.4f, 0.7f,0.0f},{0.0f,0.0f}}, // 左上
+	{{ 0.4f,-0.7f,0.0f},{1.0f,1.0f}}, // 左下
+	{{ 0.4f, 0.7f,0.0f},{1.0f,0.0f}}, // 左下
 };
 
 DirectGraphics::DirectGraphics(): 
@@ -39,6 +40,7 @@ DirectGraphics::DirectGraphics():
 	m_pPsShader(nullptr),
 	m_vertBuff(nullptr),
 	m_indexBuff(nullptr),
+	m_texBuff(nullptr),
 	m_vbView(),
 	m_ibView(),
 	m_pPipelineState(nullptr),
@@ -46,7 +48,15 @@ DirectGraphics::DirectGraphics():
 	m_viewport(),
 	m_scissorrect()
 {
-	
+	// テクスチャのデータ作るお
+	// これはノイズ画像になるはずです。
+	for (auto& rgba : textureData)
+	{
+		rgba.R = rand() % 256;
+		rgba.G = rand() % 256;
+		rgba.B = rand() % 256;
+		rgba.A = 255; // 透明度はね…
+	}
 };
 
 
@@ -85,6 +95,11 @@ bool DirectGraphics::Init(HWND& hwnd)
 	}
 
 	if (CreateVertexBuffer() == false)
+	{
+		return false;
+	}
+
+	if (CreateTextureBuffer() == false)
 	{
 		return false;
 	}
@@ -442,7 +457,7 @@ bool DirectGraphics::CreateVertexBuffer()
 		return false;
 	}
 
-	XMFLOAT3* vertMap = nullptr;
+	DirectGraphics::Vertex* vertMap = nullptr;
 
 	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))// 確保したバッファの仮想アドレスを取得する
 	{
@@ -460,6 +475,8 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
 	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
 
+
+	// ここからインデックスビュー
 	unsigned short indices[] = {
 		0,1,2,
 		2,1,3
@@ -485,6 +502,55 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_ibView.BufferLocation = m_indexBuff->GetGPUVirtualAddress();
 	m_ibView.Format = DXGI_FORMAT_R16_UINT;
 	m_ibView.SizeInBytes = sizeof(indices);
+
+
+	return true;
+}
+
+bool DirectGraphics::CreateTextureBuffer()
+{
+	// ヒープの設定
+	D3D12_HEAP_PROPERTIES heapprop = {};
+
+	heapprop.Type = D3D12_HEAP_TYPE_CUSTOM;
+
+	//　ライトバック
+	heapprop.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
+
+	//	転送はL0、つまりCPU側から直接
+	heapprop.MemoryPoolPreference = D3D12_MEMORY_POOL_L0;
+
+	heapprop.CreationNodeMask = 0;
+	heapprop.VisibleNodeMask = 0;
+
+	D3D12_RESOURCE_DESC resDesc = {};
+
+	resDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	resDesc.Width = 256;
+	resDesc.Height = 256;
+	resDesc.DepthOrArraySize = 1;
+	resDesc.SampleDesc.Count = 1;
+	resDesc.SampleDesc.Quality = 0;
+	resDesc.MipLevels = 1;
+	resDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; // 2Dテクスチャ用
+	resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+	auto result = m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_texBuff));
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	// テクスチャバッファの転送
+	result = m_texBuff->WriteToSubresource(0, nullptr, textureData.data(), sizeof(TexRGBA) * 256, sizeof(TexRGBA) * textureData.size());
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
 	return true;
 }
 
@@ -535,9 +601,11 @@ bool DirectGraphics::CreateShader()
 bool DirectGraphics::CreateInputLayout()
 {
 
+	// ここでの情報がシェーダーに渡されるぞ！
 
 	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
 	{
+		// 頂点情報
 		{
 			"POSITION",									// セマンティクス
 			0,
@@ -545,6 +613,16 @@ bool DirectGraphics::CreateInputLayout()
 			0,											// 入力スロットインデックス
 			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
+		// UV情報
+		{
+			"TEXCOORD",
+			0,
+			DXGI_FORMAT_R32G32_FLOAT,					// 情報はXMFLOAT2なので二つぶん
+			0,
+			D3D12_APPEND_ALIGNED_ELEMENT,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
 			0
 		},
 	};

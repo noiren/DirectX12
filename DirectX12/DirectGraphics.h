@@ -26,6 +26,15 @@ public:
 
 	void Render();
 
+	struct Vertex {
+		XMFLOAT3 pos; // xyz座標
+		XMFLOAT2 uv;  // uv座標
+	};
+
+	struct TexRGBA {
+		unsigned char R, G, B, A;
+	};
+
 private:
 
 	// 初期化系
@@ -39,6 +48,7 @@ private:
 	bool SetupSwapChain();
 
 	bool CreateVertexBuffer();
+	bool CreateTextureBuffer();
 	bool CreateShader();
 	bool CreateInputLayout();
 
@@ -63,8 +73,10 @@ private:
 	ID3D12Resource* m_vertBuff; // 頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW m_vbView;// 頂点バッファビュー
 
-	ID3D12Resource* m_indexBuff;
-	D3D12_INDEX_BUFFER_VIEW m_ibView;
+	ID3D12Resource* m_indexBuff; // インデックスバッファ
+	D3D12_INDEX_BUFFER_VIEW m_ibView; //　インデックスバッファビュー
+
+	ID3D12Resource* m_texBuff;	//	テクスチャバッファ
 
 	ID3D12PipelineState* m_pPipelineState;
 
