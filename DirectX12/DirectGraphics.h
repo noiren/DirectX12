@@ -49,6 +49,8 @@ private:
 
 	bool CreateVertexBuffer();
 	bool CreateTextureBuffer();
+	bool CreateShaderResourceView();
+	bool CreateRootSignature();
 	bool CreateShader();
 	bool CreateInputLayout();
 
@@ -62,7 +64,7 @@ private:
 	ID3D12CommandAllocator* m_cmdAllocator;
 	ID3D12GraphicsCommandList* m_cmdList;
 	ID3D12CommandQueue* m_cmdQueue;
-	ID3D12DescriptorHeap* m_rtvHeaps;
+	ID3D12DescriptorHeap* m_rtvHeaps;	// レンダーターゲットビュー用のディスクリプタヒープ
 	std::vector<ID3D12Resource*> m_backBuffers;
 	ID3D12Fence* m_fence;
 	UINT64 m_fenceVal;
@@ -77,6 +79,7 @@ private:
 	D3D12_INDEX_BUFFER_VIEW m_ibView; //　インデックスバッファビュー
 
 	ID3D12Resource* m_texBuff;	//	テクスチャバッファ
+	ID3D12DescriptorHeap* m_pTexDescHeap;
 
 	ID3D12PipelineState* m_pPipelineState;
 

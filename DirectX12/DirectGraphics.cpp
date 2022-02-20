@@ -41,6 +41,7 @@ DirectGraphics::DirectGraphics():
 	m_vertBuff(nullptr),
 	m_indexBuff(nullptr),
 	m_texBuff(nullptr),
+	m_pTexDescHeap(nullptr),
 	m_vbView(),
 	m_ibView(),
 	m_pPipelineState(nullptr),
@@ -48,14 +49,14 @@ DirectGraphics::DirectGraphics():
 	m_viewport(),
 	m_scissorrect()
 {
-	// テクスチャのデータ作るお
+	// テクスチャのデータ作る
 	// これはノイズ画像になるはずです。
 	for (auto& rgba : textureData)
 	{
 		rgba.R = rand() % 256;
 		rgba.G = rand() % 256;
 		rgba.B = rand() % 256;
-		rgba.A = 255; // 透明度はね…
+		rgba.A = 255;
 	}
 };
 
@@ -100,6 +101,16 @@ bool DirectGraphics::Init(HWND& hwnd)
 	}
 
 	if (CreateTextureBuffer() == false)
+	{
+		return false;
+	}
+
+	if (CreateShaderResourceView() == false)
+	{
+		return false;
+	}
+
+	if (CreateRootSignature() == false)
 	{
 		return false;
 	}
@@ -358,7 +369,16 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);// 頂点バッファビューの設定
 
-	m_cmdList->IASetIndexBuffer(&m_ibView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけだぞ)
+	m_cmdList->IASetIndexBuffer(&m_ibView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけ)
+
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); 
+
+	m_cmdList->SetDescriptorHeaps(1, &m_pTexDescHeap); // ディスクリプタヒープの設定
+
+	m_cmdList->SetGraphicsRootDescriptorTable(
+		0,
+		m_pTexDescHeap->GetGPUDescriptorHandleForHeapStart()
+	);
 
 	m_cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
 
@@ -430,7 +450,7 @@ bool DirectGraphics::CreateFence()
 
 bool DirectGraphics::CreateVertexBuffer()
 {
-	// 頂点の大きさ分の空きをメモリに作ってあげるんだぞ！
+	// 頂点の大きさ分の空きをメモリに作る
 
 	D3D12_HEAP_PROPERTIES heapprop = {};
 
@@ -554,6 +574,104 @@ bool DirectGraphics::CreateTextureBuffer()
 	return true;
 }
 
+bool DirectGraphics::CreateShaderResourceView()
+{
+	// テクスチャや定数バッファに関するビューはディスクリプタヒープ上に作る
+
+	D3D12_DESCRIPTOR_HEAP_DESC descHeapDesc = {};
+
+	descHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	descHeapDesc.NodeMask = 0;
+	descHeapDesc.NumDescriptors = 1;
+	descHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;// シェーダーリソースビュー用
+
+	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(&m_pTexDescHeap));
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+
+	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // RGBA(0.0f~1.0fに正規化している)
+	srvDesc.Shader4ComponentMapping =
+		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+
+	m_device->CreateShaderResourceView(
+		m_texBuff,	// ビューと関連づけるバッファ
+		&srvDesc,	// テクスチャ設定情報
+		m_pTexDescHeap->GetCPUDescriptorHandleForHeapStart() // ヒープのどこに割り当てるか
+	);
+
+	return true;
+}
+
+bool DirectGraphics::CreateRootSignature()
+{
+	// ディスクリプタレンジの作成
+	D3D12_DESCRIPTOR_RANGE descTblRange = {};
+	descTblRange.NumDescriptors = 1;
+	descTblRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; // 種別はテクスチャ
+	descTblRange.BaseShaderRegister = 0; // 0番スロットからスタート
+	descTblRange.OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	// ルートパラメーター作成
+	D3D12_ROOT_PARAMETER rootparam = {};
+
+	rootparam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; // ディスクリプタテーブルとして使用予定
+	rootparam.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL; // ピクセルシェーダーから見えるもの
+	rootparam.DescriptorTable.pDescriptorRanges = &descTblRange;
+	rootparam.DescriptorTable.NumDescriptorRanges = 1;
+
+	// サンプラー設定の作成
+	D3D12_STATIC_SAMPLER_DESC samplerDesc = {};
+	samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	samplerDesc.BorderColor =
+		D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+	samplerDesc.MinLOD = 0.0f;
+	samplerDesc.ShaderVisibility =
+		D3D12_SHADER_VISIBILITY_PIXEL;
+	samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+
+	// ルートシグネチャここで作成
+	D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+	rootSignatureDesc.Flags =
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+	rootSignatureDesc.pParameters = &rootparam;
+	rootSignatureDesc.NumParameters = 1;
+	rootSignatureDesc.pStaticSamplers = &samplerDesc;
+	rootSignatureDesc.NumStaticSamplers = 1;
+
+	ID3DBlob* rootSigBlob = nullptr; // ルードシグネチャのバイナリコードを作成する
+	ID3DBlob* errorBlob = nullptr;
+
+	auto result = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &rootSigBlob, &errorBlob);
+	if (result != S_OK)
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+	}
+
+	result = m_device->CreateRootSignature(0, rootSigBlob->GetBufferPointer(), rootSigBlob->GetBufferSize(), IID_PPV_ARGS(&m_pRootSignature));
+
+	rootSigBlob->Release();
+
+	return true;
+}
+
 bool DirectGraphics::CreateShader()
 {
 	ID3DBlob* errorBlob = nullptr;
@@ -627,7 +745,7 @@ bool DirectGraphics::CreateInputLayout()
 		},
 	};
 
-	// ここでグラフィックスパイプラインステートも作っちゃう！
+	// ここでグラフィックスパイプラインステートも作る
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC gpipeline = {};
 
@@ -638,7 +756,7 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.PS.BytecodeLength = m_pPsShader->GetBufferSize();
 
 	// サンプルマスク・ラスタライザーの設定
-	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK; // よくわからん
+	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
 	
 	gpipeline.RasterizerState.MultisampleEnable = false;
 	gpipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // カリングしない
@@ -679,33 +797,9 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.SampleDesc.Count = 1;
 	gpipeline.SampleDesc.Quality = 0;
 
-	// ルートシグネチャここで作成
-	D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
-	rootSignatureDesc.Flags =
-		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-	ID3DBlob* rootSigBlob = nullptr; // ルードシグネチャのバイナリコードを作成する
-	ID3DBlob* errorBlob = nullptr;
-
-	auto result = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &rootSigBlob, &errorBlob);
-	if (result != S_OK)
-	{
-		// エラーメッセージ表示
-		std::string errstr;
-		errstr.resize(errorBlob->GetBufferSize());
-		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
-		errstr += "\n";
-		::OutputDebugStringA(errstr.c_str());
-		return false;
-	}
-
-	result = m_device->CreateRootSignature(0, rootSigBlob->GetBufferPointer(), rootSigBlob->GetBufferSize(), IID_PPV_ARGS(&m_pRootSignature));
-
-	rootSigBlob->Release();
-
 	gpipeline.pRootSignature = m_pRootSignature;
 
-	result = m_device->CreateGraphicsPipelineState(&gpipeline, IID_PPV_ARGS(&m_pPipelineState));
+	auto result = m_device->CreateGraphicsPipelineState(&gpipeline, IID_PPV_ARGS(&m_pPipelineState));
 
 
 	if (result == S_OK)
