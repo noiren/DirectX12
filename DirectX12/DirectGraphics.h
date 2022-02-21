@@ -3,11 +3,13 @@
 #include <dxgi1_6.h>
 #include <vector>
 #include <DirectXMath.h>
+#include <DirectXTex.h>
+
+#pragma comment(lib,"DirectXTex.lib")
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
 
 using namespace DirectX;
-
 class DirectGraphics
 {
 public:
@@ -87,4 +89,6 @@ private:
 
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorrect;
+
+	DirectX::TexMetadata m_metadata;
 };

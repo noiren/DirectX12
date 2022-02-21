@@ -9,7 +9,7 @@
 #pragma comment(lib,"d3dcompiler.lib")
 
 D3D12_RESOURCE_BARRIER BarrierDesc = {};
-
+using namespace DirectX;
 namespace {
 	const float WINDOW_WIDTH = 900.f;
 	const float WINDOW_HEIGHT = 900.f;
@@ -47,7 +47,8 @@ DirectGraphics::DirectGraphics():
 	m_pPipelineState(nullptr),
 	m_pRootSignature(nullptr),
 	m_viewport(),
-	m_scissorrect()
+	m_scissorrect(),
+	m_metadata()
 {
 	// テクスチャのデータ作る
 	// これはノイズ画像になるはずです。
@@ -302,12 +303,17 @@ void DirectGraphics::CreateRenderTargetView()
 	m_backBuffers.reserve(swcDesc.BufferCount);
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
 
+	// SRGB用のレンダーターゲットビューの設定
+	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; // ガンマ補正アリ
+	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+
 	for (int idx = 0; idx < swcDesc.BufferCount; ++idx)
 	{
 		m_backBuffers.emplace_back(nullptr);
 		m_swapChain->GetBuffer(static_cast<UINT>(idx),IID_PPV_ARGS(&m_backBuffers[idx]));
 
-		m_device->CreateRenderTargetView(m_backBuffers[idx], nullptr, handle);
+		m_device->CreateRenderTargetView(m_backBuffers[idx], &rtvDesc, handle);
 
 		handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);// ここの分だけずらして取得
 	}
@@ -529,6 +535,26 @@ bool DirectGraphics::CreateVertexBuffer()
 
 bool DirectGraphics::CreateTextureBuffer()
 {
+	// テクスチャのロード
+
+	auto result = CoInitializeEx(0, COINIT_MULTITHREADED);
+
+	ScratchImage scratchImg = {};
+
+	result = LoadFromWICFile(
+		L"kato.png",
+		WIC_FLAGS_NONE,
+		&m_metadata,
+		scratchImg
+	);
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	auto img = scratchImg.GetImage(0, 0, 0);
+
 	// ヒープの設定
 	D3D12_HEAP_PROPERTIES heapprop = {};
 
@@ -545,18 +571,18 @@ bool DirectGraphics::CreateTextureBuffer()
 
 	D3D12_RESOURCE_DESC resDesc = {};
 
-	resDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	resDesc.Width = 256;
-	resDesc.Height = 256;
-	resDesc.DepthOrArraySize = 1;
+	resDesc.Format = m_metadata.format;
+	resDesc.Width = m_metadata.width;
+	resDesc.Height = m_metadata.height;
+	resDesc.DepthOrArraySize = m_metadata.arraySize;
 	resDesc.SampleDesc.Count = 1;
 	resDesc.SampleDesc.Quality = 0;
-	resDesc.MipLevels = 1;
-	resDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; // 2Dテクスチャ用
+	resDesc.MipLevels = m_metadata.mipLevels;
+	resDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(m_metadata.dimension);
 	resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 	resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-	auto result = m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_texBuff));
+	result = m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_texBuff));
 
 	if (result != S_OK)
 	{
@@ -564,7 +590,7 @@ bool DirectGraphics::CreateTextureBuffer()
 	}
 
 	// テクスチャバッファの転送
-	result = m_texBuff->WriteToSubresource(0, nullptr, textureData.data(), sizeof(TexRGBA) * 256, sizeof(TexRGBA) * textureData.size());
+	result = m_texBuff->WriteToSubresource(0, nullptr, img->pixels, img->rowPitch, img->slicePitch);
 
 	if (result != S_OK)
 	{
@@ -594,7 +620,7 @@ bool DirectGraphics::CreateShaderResourceView()
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // RGBA(0.0f~1.0fに正規化している)
+	srvDesc.Format = m_metadata.format; // RGBA(0.0f~1.0fに正規化している)
 	srvDesc.Shader4ComponentMapping =
 		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

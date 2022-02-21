@@ -39,5 +39,6 @@
     <None Include="BasicShaderHeader.hlsli">
       <Filter>リソース ファイル</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

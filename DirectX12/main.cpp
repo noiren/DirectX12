@@ -43,7 +43,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
 #endif
 
-	DirectGraphics* graphics = new DirectGraphics();
 
 	WNDCLASSEX w = {};
 
@@ -71,6 +70,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 		w.hInstance,
 		nullptr
 	);
+	DirectGraphics* graphics = new DirectGraphics();
 
 	graphics->EnableDebugLayer();
 
