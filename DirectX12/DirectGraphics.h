@@ -28,6 +28,8 @@ public:
 
 	void Render();
 
+	void Rotate();
+
 	struct Vertex {
 		XMFLOAT3 pos; // xyz座標
 		XMFLOAT2 uv;  // uv座標
@@ -51,7 +53,8 @@ private:
 
 	bool CreateVertexBuffer();
 	bool CreateTextureBuffer();
-	bool CreateShaderResourceView();
+	bool CreateConstantBuffer();
+	bool CreateShaderConstResourceView();
 	bool CreateRootSignature();
 	bool CreateShader();
 	bool CreateInputLayout();
@@ -81,7 +84,15 @@ private:
 	D3D12_INDEX_BUFFER_VIEW m_ibView; //　インデックスバッファビュー
 
 	ID3D12Resource* m_texBuff;	//	テクスチャバッファ
-	ID3D12DescriptorHeap* m_pTexDescHeap;
+	ID3D12DescriptorHeap* m_pDescHeap;
+
+	ID3D12Resource* m_constBuff; // 定数バッファ
+
+	XMMATRIX m_worldMat; // ワールド行列
+	XMMATRIX m_viewMat; // ビュー行列
+	XMMATRIX m_projMat; // プロジェクション行列
+
+	XMMATRIX* m_constMapMatrix; // マップしたマップ行列
 
 	ID3D12Resource* m_pUploadBuff; // アップロードリソース
 
@@ -93,4 +104,7 @@ private:
 	D3D12_RECT m_scissorrect;
 
 	DirectX::TexMetadata m_metadata;
+
+
+	float m_angle;
 };
