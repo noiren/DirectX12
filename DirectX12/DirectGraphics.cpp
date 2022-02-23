@@ -3,6 +3,7 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
+#include <d3dx12.h>
 
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
@@ -42,6 +43,7 @@ DirectGraphics::DirectGraphics():
 	m_indexBuff(nullptr),
 	m_texBuff(nullptr),
 	m_pTexDescHeap(nullptr),
+	m_pUploadBuff(nullptr),
 	m_vbView(),
 	m_ibView(),
 	m_pPipelineState(nullptr),
@@ -555,6 +557,7 @@ bool DirectGraphics::CreateTextureBuffer()
 
 	auto img = scratchImg.GetImage(0, 0, 0);
 
+#if 0 // 従来の方法
 	// ヒープの設定
 	D3D12_HEAP_PROPERTIES heapprop = {};
 
@@ -596,6 +599,138 @@ bool DirectGraphics::CreateTextureBuffer()
 	{
 		return false;
 	}
+#endif
+
+	{
+		// 中間バッファとしてのアップロードヒープ設定
+		D3D12_HEAP_PROPERTIES uploadHeapProp = {};
+		uploadHeapProp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+		uploadHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		uploadHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+		uploadHeapProp.CreationNodeMask = 0;
+		uploadHeapProp.VisibleNodeMask = 0;
+
+		D3D12_RESOURCE_DESC resDesc = {};
+		resDesc.Format = DXGI_FORMAT_UNKNOWN;
+		resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+
+		resDesc.Width = img->slicePitch;
+		resDesc.Height = 1;
+		resDesc.DepthOrArraySize = 1;
+		resDesc.MipLevels = 1;
+
+		resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		resDesc.SampleDesc.Count = 1;
+		resDesc.SampleDesc.Quality = 0;
+
+		// 中間バッファの作成
+
+		result = m_device->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&resDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ, // CPUから書き込み可能だが、GPUから見ると読み取り専用
+			nullptr,
+			IID_PPV_ARGS(&m_pUploadBuff)
+		);
+
+	}
+
+	{
+		// テクスチャのためのヒープ設定
+		D3D12_HEAP_PROPERTIES texHeapProp = {};
+
+		texHeapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		texHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		texHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		texHeapProp.CreationNodeMask = 0;
+		texHeapProp.VisibleNodeMask = 0;
+
+		D3D12_RESOURCE_DESC resDesc = {};
+
+		resDesc.Format = m_metadata.format;
+		resDesc.Width = m_metadata.width;
+		resDesc.Height = m_metadata.height;
+		resDesc.DepthOrArraySize = m_metadata.arraySize;
+		resDesc.SampleDesc.Count = 1;
+		resDesc.SampleDesc.Quality = 0;
+		resDesc.MipLevels = m_metadata.mipLevels;
+		resDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(m_metadata.dimension);
+		resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		result = m_device->CreateCommittedResource(
+			&texHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&resDesc,
+			D3D12_RESOURCE_STATE_COPY_DEST, // コピー先
+			nullptr,
+			IID_PPV_ARGS(&m_texBuff)
+		);
+
+	}
+
+	// アップロードリソースへマップを行う
+	uint8_t* mapforImg = nullptr;
+	result = m_pUploadBuff->Map(0, nullptr, (void**)&mapforImg);
+
+	std::copy_n(img->pixels, img->slicePitch, mapforImg);
+	m_pUploadBuff->Unmap(0, nullptr);
+
+	D3D12_TEXTURE_COPY_LOCATION src = {};
+
+	// コピー元(アップロード側)設定
+	src.pResource = m_pUploadBuff; // 中間バッファ
+	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	src.PlacedFootprint.Offset = 0;
+	src.PlacedFootprint.Footprint.Width = m_metadata.width;
+	src.PlacedFootprint.Footprint.Height = m_metadata.height;
+	src.PlacedFootprint.Footprint.Depth = m_metadata.depth;
+	src.PlacedFootprint.Footprint.RowPitch = img->rowPitch;
+	src.PlacedFootprint.Footprint.Format = img->format;
+
+	D3D12_TEXTURE_COPY_LOCATION dst = {};
+
+	// コピー先の設定
+	dst.pResource = m_texBuff;
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = 0;
+
+	m_cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+	D3D12_RESOURCE_BARRIER BarrierDesc = {};
+
+	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	BarrierDesc.Transition.pResource = m_texBuff;
+	BarrierDesc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	BarrierDesc.Transition.StateBefore =
+		D3D12_RESOURCE_STATE_COPY_DEST;
+	BarrierDesc.Transition.StateAfter =
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+	m_cmdList->ResourceBarrier(1, &BarrierDesc);
+	m_cmdList->Close();
+
+	ID3D12CommandList* cmdlists[] = { m_cmdList };
+
+	m_cmdQueue->ExecuteCommandLists(1, cmdlists);
+
+	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+
+	if (m_fence->GetCompletedValue() != m_fenceVal)
+	{
+		auto event = CreateEvent(nullptr, false, false, nullptr);
+		m_fence->SetEventOnCompletion(m_fenceVal, event);
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event); 
+	}
+	m_cmdAllocator->Reset();//キューをクリア
+	m_cmdList->Reset(m_cmdAllocator, nullptr);
 
 	return true;
 }
@@ -818,7 +953,7 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 
 	gpipeline.NumRenderTargets = 1;
-	gpipeline.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	gpipeline.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 
 	gpipeline.SampleDesc.Count = 1;
 	gpipeline.SampleDesc.Quality = 0;

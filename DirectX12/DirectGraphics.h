@@ -83,6 +83,8 @@ private:
 	ID3D12Resource* m_texBuff;	//	テクスチャバッファ
 	ID3D12DescriptorHeap* m_pTexDescHeap;
 
+	ID3D12Resource* m_pUploadBuff; // アップロードリソース
+
 	ID3D12PipelineState* m_pPipelineState;
 
 	ID3D12RootSignature* m_pRootSignature;
