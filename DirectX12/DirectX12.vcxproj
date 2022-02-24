@@ -172,7 +172,14 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="BasicShaderHeader.hlsli" />
+    <None Include="Cube.mtl" />
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Object Include="Cube.obj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="kato.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
