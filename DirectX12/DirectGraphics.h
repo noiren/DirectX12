@@ -42,6 +42,8 @@ public:
 private:
 
 	// ‰Šú‰»Œn
+	void LoadObj();
+
 	bool CreateDevice();
 	bool CreateCommand();
 	bool CreateCommandQueue();
