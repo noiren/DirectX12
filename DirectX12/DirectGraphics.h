@@ -35,6 +35,12 @@ public:
 		XMFLOAT2 uv;  // uv座標
 	};
 
+	struct VertexObj {
+		XMFLOAT3 pos;		// 頂点座標
+		XMFLOAT3 normal;	// 法線ベクトル
+		XMFLOAT2 uv;		// uv座標
+	};
+
 	struct TexRGBA {
 		unsigned char R, G, B, A;
 	};
@@ -106,7 +112,7 @@ private:
 	D3D12_RECT m_scissorrect;
 
 	DirectX::TexMetadata m_metadata;
-
+	std::vector<VertexObj> m_vertex;
 
 	float m_angle;
 };

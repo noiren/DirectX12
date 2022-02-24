@@ -20,6 +20,7 @@ namespace {
 
 std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
 
+
 DirectGraphics::Vertex vertices[] =
 {
 	{{-1.f,-1.f,0.f},{0.0f,1.0f}}, // 左下
@@ -58,6 +59,7 @@ DirectGraphics::DirectGraphics():
 	m_viewport(),
 	m_scissorrect(),
 	m_metadata(),
+	m_vertex(),
 	m_angle(XM_PIDIV4)
 {
 	// テクスチャのデータ作る
@@ -184,43 +186,106 @@ void DirectGraphics::LoadObj()
 	if (!ret)
 		exit(1);
 
-	for (const auto& shape : shapes) {
-		size_t index_offset = 0;  // インデントのオフセット
-		for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
-			// 面 f を構成sする頂点の数
-			int num_vertices = shape.mesh.num_face_vertices[f];
+	/*
+		TODO:
+		現状attribの中の頂点は全部一つずつになっているのでこれをXMFLOAT3のvectorに入れなおす。
+		normalやuvも同じようにして、それぞれindexから参照できるようにする。
+	*/
 
-			for (size_t v = 0; v < num_vertices; v++) {
-				// access to vertex
-				tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
+	std::vector<XMFLOAT3> vec_vertex;
+	std::vector<XMFLOAT3> vec_normal;
+	std::vector<XMFLOAT2> vec_uv;
 
-				// 頂点の座標
-				float vx = attrib.vertices[3 * idx.vertex_index + 0];
-				float vy = attrib.vertices[3 * idx.vertex_index + 1];
-				float vz = attrib.vertices[3 * idx.vertex_index + 2];
+	// 今回頂点は3で固定とする
 
-				// 頂点の法線
-				float nx = attrib.normals[3 * idx.normal_index + 0];
-				float ny = attrib.normals[3 * idx.normal_index + 1];
-				float nz = attrib.normals[3 * idx.normal_index + 2];
+	const int VERTEX_NUM = 3;
+	const int NORMAL_NUM = 3;
+	const int UV_NUM = 2;
 
-				// 頂点のテクスチャ座標
-				tinyobj::real_t tx =
-					attrib.texcoords[2 * idx.texcoord_index + 0];
-				tinyobj::real_t ty =
-					attrib.texcoords[2 * idx.texcoord_index + 1];
+	int now_vertex_num = 0;
+	std::vector<float> vec_temp;
+	
+	// 頂点座標取得
+	XMFLOAT3 tempVertexFloat;
+	for (auto vertex : attrib.vertices)
+	{
+		++now_vertex_num;
 
-				// 頂点の色
-				float red = attrib.colors[3 * idx.vertex_index + 0];
-				float green = attrib.colors[3 * idx.vertex_index + 1];
-				float blue = attrib.colors[3 * idx.vertex_index + 2];
-			}
-			index_offset += num_vertices;
-
-			// per-face material
-			shape.mesh.material_ids[f];
+		switch (now_vertex_num) {
+			case 1:
+				tempVertexFloat.x = vertex;
+				break;
+			case 2:
+				tempVertexFloat.y = vertex;
+				break;
+			case 3:
+				tempVertexFloat.z = vertex;
+				vec_vertex.push_back(tempVertexFloat);
+				now_vertex_num = 0;
+				break;
+			default:
+				break;
 		}
 	}
+
+	// 法線ベクトル取得
+	now_vertex_num = 0;
+	XMFLOAT3 tempNormalFloat;
+	for (auto normal : attrib.normals)
+	{
+		++now_vertex_num;
+
+		switch (now_vertex_num) {
+		case 1:
+			tempNormalFloat.x = normal;
+			break;
+		case 2:
+			tempNormalFloat.y = normal;
+			break;
+		case 3:
+			tempNormalFloat.z = normal;
+			vec_normal.push_back(tempNormalFloat);
+			now_vertex_num = 0;
+			break;
+		default:
+			break;
+		}
+	}
+
+	// UV座標取得
+	now_vertex_num = 0;
+	XMFLOAT2 tempUVFloat;
+	for (auto texcoord : attrib.texcoords)
+	{
+		++now_vertex_num;
+
+		switch (now_vertex_num) {
+		case 1:
+			tempUVFloat.x = texcoord;
+			break;
+		case 2:
+			tempUVFloat.y = texcoord;
+			vec_uv.push_back(tempUVFloat);
+			now_vertex_num = 0;
+			break;
+		default:
+			break;
+		}
+	}
+
+	for (auto index : shapes[0].mesh.indices)
+	{
+		XMFLOAT3 vertexData = vec_vertex[index.vertex_index];
+		XMFLOAT3 normalData = vec_normal[index.normal_index];
+		XMFLOAT2 uvData		= vec_uv[index.texcoord_index];
+
+		VertexObj obj = { vertexData,normalData,uvData };
+
+		m_vertex.push_back(obj);
+	}
+
+	if (!ret)
+		exit(1);
 }
 
 bool DirectGraphics::CreateDevice()
