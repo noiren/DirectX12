@@ -3,6 +3,7 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include "DirectGraphics.h"
+#include "ObjFile.h"
 #ifdef _DEBUG
 #include <iostream>
 #endif
@@ -70,6 +71,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 		w.hInstance,
 		nullptr
 	);
+
+	ObjFile* obj = new ObjFile();
+	obj->Load("Cube.obj");
+
 	DirectGraphics* graphics = new DirectGraphics();
 
 	graphics->EnableDebugLayer();
