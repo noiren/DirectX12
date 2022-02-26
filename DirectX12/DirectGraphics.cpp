@@ -60,6 +60,8 @@ DirectGraphics::DirectGraphics():
 	m_scissorrect(),
 	m_metadata(),
 	m_vertex(),
+	m_modelVertices(),
+	m_vertNum(0),
 	m_angle(XM_PIDIV4)
 {
 	// テクスチャのデータ作る
@@ -77,6 +79,8 @@ DirectGraphics::DirectGraphics():
 bool DirectGraphics::Init(HWND& hwnd)
 {
 	LoadObj();
+
+	LoadModel();
 
 	if (CreateDevice() == false)
 	{
@@ -286,6 +290,35 @@ void DirectGraphics::LoadObj()
 
 	if (!ret)
 		exit(1);
+}
+
+void DirectGraphics::LoadModel()
+{
+
+	constexpr size_t pmdvertex_size = 38;
+
+	char signature[3];
+	PMDHeader pmdheader = {};
+	FILE* fp;
+	auto err = fopen_s(&fp, "Model/初音ミク.pmd", "rb");
+	if (fp == nullptr) {
+		char strerr[256];
+		strerror_s(strerr, 256, err);
+	}
+	fread(signature, sizeof(signature), 1, fp);
+	fread(&pmdheader, sizeof(pmdheader), 1, fp);
+
+
+	fread(&m_vertNum, sizeof(m_vertNum), 1, fp);
+
+	std::vector<PMDVertex> modelvertices(m_vertNum);
+	for (auto i = 0; i < m_vertNum; i++)
+	{
+		fread(&modelvertices[i], pmdvertex_size, 1, fp);
+	}
+	std::copy(modelvertices.begin(), modelvertices.end(), std::back_inserter(m_modelVertices));
+	m_modelVertices = modelvertices;
+	fclose(fp);
 }
 
 bool DirectGraphics::CreateDevice()
@@ -505,7 +538,7 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->OMSetRenderTargets(1, &rtvH, true, nullptr);
 
-	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
+	float clearColor[] = { 1.0f,1.0f,1.0f,1.0f }; // 白色
 
 	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
 
@@ -515,7 +548,7 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); // ルートシグネチャの設定
 
-	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);// プリミティブトポロジの設定
 
 	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);// 頂点バッファビューの設定
 
@@ -532,7 +565,7 @@ bool DirectGraphics::SetupSwapChain()
 		heapHandle
 	);
 
-	m_cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+	m_cmdList->DrawInstanced(m_vertNum, 1, 0, 0);
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -614,7 +647,7 @@ bool DirectGraphics::CreateVertexBuffer()
 	// 頂点の大きさ分の空きをメモリに作る
 
 	CD3DX12_HEAP_PROPERTIES heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices));
+	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(m_modelVertices));
 
 	if (FAILED(m_device->CreateCommittedResource(
 		&heapProp, // UPLOADヒープとして使用する
@@ -628,14 +661,14 @@ bool DirectGraphics::CreateVertexBuffer()
 		return false;
 	}
 
-	DirectGraphics::Vertex* vertMap = nullptr;
+	PMDVertex* vertMap = nullptr;
 
 	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))// 確保したバッファの仮想アドレスを取得する
 	{
 		return false;
 	}
 
-	std::copy(std::begin(vertices), std::end(vertices), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
+	std::copy(m_modelVertices.begin(), m_modelVertices.end(), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
 
 	m_vertBuff->Unmap(0, nullptr);
 
@@ -643,8 +676,8 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_vbView = {};
 
 	m_vbView.BufferLocation = m_vertBuff->GetGPUVirtualAddress(); // バッファの仮想アドレス
-	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
-	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
+	m_vbView.SizeInBytes = sizeof(m_modelVertices);						// 全バイト数
+	m_vbView.StrideInBytes = sizeof(m_modelVertices[0]);					// 一頂点のバイト数
 
 
 	// ここからインデックスビュー
@@ -690,10 +723,10 @@ bool DirectGraphics::CreateVertexBuffer()
 bool DirectGraphics::CreateConstantBuffer()
 {
 	// 45°y軸方向に回転(ワールド行列)
-	XMMATRIX matrix = m_worldMat = XMMatrixRotationY(XM_PIDIV4);
+	XMMATRIX matrix;
 
-	XMFLOAT3 eye(0, 0, -5);		// 視点座標
-	XMFLOAT3 target(0, 0, 0);	// 注視点座標
+	XMFLOAT3 eye(0, 10, -15);		// 視点座標
+	XMFLOAT3 target(0, 10, 0);	// 注視点座標
 	XMFLOAT3 up(0, 1, 0);		// 上ベクトル
 
 	// ビュー行列
@@ -705,7 +738,7 @@ bool DirectGraphics::CreateConstantBuffer()
 		XM_PIDIV2,
 		1280.f / 720.f,
 		1.0f,
-		10.0f
+		100.0f
 	);
 	matrix *= m_projMat;
 
@@ -1119,11 +1152,51 @@ bool DirectGraphics::CreateInputLayout()
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
 			0
 		},
+		// 頂点情報
+		{
+			"NORMAL",									// セマンティクス
+			0,
+			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
+			0,											// 入力スロットインデックス
+			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
 		// UV情報
 		{
 			"TEXCOORD",
 			0,
 			DXGI_FORMAT_R32G32_FLOAT,					// 情報はXMFLOAT2なので二つぶん
+			0,
+			D3D12_APPEND_ALIGNED_ELEMENT,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+		// BONE
+		{
+			"BONE_NO",
+			0,
+			DXGI_FORMAT_R16G16_UINT,
+			0,
+			D3D12_APPEND_ALIGNED_ELEMENT,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+		// WEIGHT
+		{
+			"WEIGHT",
+			0,
+			DXGI_FORMAT_R8_UINT,
+			0,
+			D3D12_APPEND_ALIGNED_ELEMENT,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+		// EDGE_FLG
+		{
+			"EDGE_FLG",
+			0,
+			DXGI_FORMAT_R8_UINT,
 			0,
 			D3D12_APPEND_ALIGNED_ELEMENT,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,

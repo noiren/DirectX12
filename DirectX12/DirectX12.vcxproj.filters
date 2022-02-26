@@ -48,11 +48,6 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <Object Include="Cube.obj">
-      <Filter>リソース ファイル</Filter>
-    </Object>
-  </ItemGroup>
-  <ItemGroup>
     <Image Include="kato.png">
       <Filter>リソース ファイル</Filter>
     </Image>

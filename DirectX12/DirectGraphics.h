@@ -41,6 +41,21 @@ public:
 		XMFLOAT2 uv;		// uvç¿ïW
 	};
 
+	struct PMDHeader {
+		float version;
+		char model_name[20];
+		char comment[256];
+	};
+
+	struct PMDVertex {
+		XMFLOAT3 pos;
+		XMFLOAT3 normal;
+		XMFLOAT2 uv;
+		unsigned short boneNo[2];
+		unsigned char boneWeight;
+		unsigned char edgeFlg;
+	}; // 38 byte
+
 	struct TexRGBA {
 		unsigned char R, G, B, A;
 	};
@@ -49,6 +64,7 @@ private:
 
 	// èâä˙âªån
 	void LoadObj();
+	void LoadModel();
 
 	bool CreateDevice();
 	bool CreateCommand();
@@ -113,6 +129,7 @@ private:
 
 	DirectX::TexMetadata m_metadata;
 	std::vector<VertexObj> m_vertex;
-
+	std::vector<PMDVertex> m_modelVertices;
+	unsigned int m_vertNum;
 	float m_angle;
 };
