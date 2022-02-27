@@ -21,12 +21,18 @@
     <ClCompile Include="main.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="DirectInput.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DirectGraphics.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="tiny_obj_loader.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectInput.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
   </ItemGroup>
@@ -46,11 +52,6 @@
     <None Include="Cube.mtl">
       <Filter>リソース ファイル</Filter>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Object Include="Cube.obj">
-      <Filter>リソース ファイル</Filter>
-    </Object>
   </ItemGroup>
   <ItemGroup>
     <Image Include="kato.png">

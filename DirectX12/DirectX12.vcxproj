@@ -122,6 +122,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(DXTEX_DIR)\Bin\Desktop_2019_Win10\x64\Debug</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dinput8.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -142,10 +143,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="DirectGraphics.cpp" />
+    <ClCompile Include="DirectInput.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DirectGraphics.h" />
+    <ClInclude Include="DirectInput.h" />
     <ClInclude Include="tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>
@@ -174,9 +177,6 @@
     <None Include="BasicShaderHeader.hlsli" />
     <None Include="Cube.mtl" />
     <None Include="packages.config" />
-  </ItemGroup>
-  <ItemGroup>
-    <Object Include="Cube.obj" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="kato.png" />

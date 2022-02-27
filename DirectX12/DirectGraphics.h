@@ -4,6 +4,7 @@
 #include <vector>
 #include <DirectXMath.h>
 #include <DirectXTex.h>
+#include "DirectInput.h"
 
 #pragma comment(lib,"DirectXTex.lib")
 #pragma comment(lib,"d3d12.lib")
@@ -28,7 +29,7 @@ public:
 
 	void Render();
 
-	void Rotate();
+	void SetRotate();
 
 	struct Vertex {
 		XMFLOAT3 pos; // xyzç¿ïW
@@ -49,7 +50,7 @@ private:
 
 	// èâä˙âªån
 	void LoadObj();
-
+	void CreateDirectInput(HWND& hwnd);
 	bool CreateDevice();
 	bool CreateCommand();
 	bool CreateCommandQueue();
@@ -115,4 +116,8 @@ private:
 	std::vector<VertexObj> m_vertex;
 
 	float m_angle;
+	XMFLOAT3 m_pos;
+	float m_size;
+
+	Input* m_directInput;
 };

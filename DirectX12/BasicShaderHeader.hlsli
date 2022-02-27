@@ -2,6 +2,7 @@
 
 struct Output {
 	float4 svpos : SV_POSITION; // system用頂点座標
+	float4 svnor : NORMAL;		// system用法線座標
 	float2 uv : TEXCOORD;		// uv値
 };
 

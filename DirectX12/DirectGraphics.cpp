@@ -20,13 +20,15 @@ namespace {
 
 std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
 
+size_t indexSize = 0;
 
-DirectGraphics::Vertex vertices[] =
+
+DirectGraphics::VertexObj vertices[] =
 {
-	{{-1.f,-1.f,0.f},{0.0f,1.0f}}, // 左下
-	{{-1.f,1.f,0.f},{0.0f,0.0f}}, // 左上
-	{{1.f,-1.f,0.f},{1.0f,1.0f}}, // 左下
-	{{1.f,1.f,0.f},{1.0f,0.0f}}, // 左下
+	{{-1.f,-1.f,-1.f},{-1.f,-1.f,0.f},{0.0f,1.0f}}, // 左下
+	{{-1.f,1.f,-1.f},{-1.f,-1.f,0.f},{0.0f,0.0f}}, // 左上
+	{{1.f,-1.f,-1.f},{-1.f,-1.f,0.f},{1.0f,1.0f}}, // 左下
+	{{1.f,1.f,-1.f},{-1.f,-1.f,0.f},{1.0f,0.0f}}, // 左下
 };
 
 DirectGraphics::DirectGraphics(): 
@@ -60,7 +62,10 @@ DirectGraphics::DirectGraphics():
 	m_scissorrect(),
 	m_metadata(),
 	m_vertex(),
-	m_angle(XM_PIDIV4)
+	m_angle(XM_PIDIV4),
+	m_size(0.f),
+	m_pos(),
+	m_directInput(nullptr)
 {
 	// テクスチャのデータ作る
 	// これはノイズ画像になるはずです。
@@ -77,6 +82,8 @@ DirectGraphics::DirectGraphics():
 bool DirectGraphics::Init(HWND& hwnd)
 {
 	LoadObj();
+
+	CreateDirectInput(hwnd);
 
 	if (CreateDevice() == false)
 	{
@@ -154,6 +161,8 @@ bool DirectGraphics::Init(HWND& hwnd)
 
 void DirectGraphics::Release()
 {
+	// TODO: 要精査
+	delete(m_directInput);
 	delete(m_rtvHeaps);	
 	delete(m_cmdQueue);
 	delete(m_cmdList);
@@ -286,6 +295,11 @@ void DirectGraphics::LoadObj()
 
 	if (!ret)
 		exit(1);
+}
+
+void DirectGraphics::CreateDirectInput(HWND& hwnd)
+{
+	m_directInput = new Input(hwnd);
 }
 
 bool DirectGraphics::CreateDevice()
@@ -532,7 +546,7 @@ bool DirectGraphics::SetupSwapChain()
 		heapHandle
 	);
 
-	m_cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -571,14 +585,74 @@ void DirectGraphics::Render()
 	}
 	m_swapChain->Present(1, 0);
 
-	Rotate();
+	SetRotate();
 }
 
-void DirectGraphics::Rotate()
+void DirectGraphics::SetRotate()
 {
-	m_angle += 0.1f;
-	m_worldMat = XMMatrixScaling(m_angle, m_angle, 0.f);
+	// X軸方向回転
+	if (m_directInput->CheckKey(static_cast<UINT>(DIK_8)))
+	{
+		m_angle += 0.1f;
+		m_worldMat = XMMatrixRotationX(m_angle);
+	}
+	if (m_directInput->CheckKey(DIK_2))
+	{
+		m_angle -= 0.1f;
+		m_worldMat = XMMatrixRotationX(m_angle);
+	}
+	
+	// Y軸方向回転
+	if (m_directInput->CheckKey(DIK_4))
+	{
+		m_angle += 0.1f;
+		m_worldMat = XMMatrixRotationY(m_angle);
+	}
+	if (m_directInput->CheckKey(DIK_6))
+	{
+		m_angle -= 0.1f;
+		m_worldMat = XMMatrixRotationY(m_angle);
+	}
+
+
+	// X軸平行移動
+	if (m_directInput->CheckKey(DIK_LEFT))
+	{
+		m_pos.x -= 0.1f;
+		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+	}
+	if (m_directInput->CheckKey(DIK_RIGHT))
+	{
+		m_pos.x += 0.1f;
+		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+	}
+
+	// Y軸平行移動
+	if (m_directInput->CheckKey(DIK_UP))
+	{
+		m_pos.y += 0.1f;
+		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+	}
+	if (m_directInput->CheckKey(DIK_DOWN))
+	{
+		m_pos.y -= 0.1f;
+		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+	}
+
+	if (m_directInput->CheckKey(DIK_D))
+	{
+		m_size -= 0.1f;
+		m_worldMat = XMMatrixScaling(m_size, m_size, 0);
+	}
+	if (m_directInput->CheckKey(DIK_F))
+	{
+		m_size += 0.1f;
+		m_worldMat = XMMatrixScaling(m_size, m_size, 0);
+	}
+
+
 	*m_constMapMatrix = m_worldMat * m_viewMat * m_projMat;
+	
 }
 
 void DirectGraphics::EnableDebugLayer()
@@ -614,7 +688,7 @@ bool DirectGraphics::CreateVertexBuffer()
 	// 頂点の大きさ分の空きをメモリに作る
 
 	CD3DX12_HEAP_PROPERTIES heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices));
+	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(m_vertex[0]) * m_vertex.size());
 
 	if (FAILED(m_device->CreateCommittedResource(
 		&heapProp, // UPLOADヒープとして使用する
@@ -628,14 +702,14 @@ bool DirectGraphics::CreateVertexBuffer()
 		return false;
 	}
 
-	DirectGraphics::Vertex* vertMap = nullptr;
+	DirectGraphics::VertexObj* vertMap = nullptr;
 
 	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))// 確保したバッファの仮想アドレスを取得する
 	{
 		return false;
 	}
 
-	std::copy(std::begin(vertices), std::end(vertices), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
+	std::copy(std::begin(m_vertex), std::end(m_vertex), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
 
 	m_vertBuff->Unmap(0, nullptr);
 
@@ -643,15 +717,27 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_vbView = {};
 
 	m_vbView.BufferLocation = m_vertBuff->GetGPUVirtualAddress(); // バッファの仮想アドレス
-	m_vbView.SizeInBytes = sizeof(vertices);						// 全バイト数
-	m_vbView.StrideInBytes = sizeof(vertices[0]);					// 一頂点のバイト数
+	m_vbView.SizeInBytes = sizeof(m_vertex[0]) * m_vertex.size();						// 全バイト数
+	m_vbView.StrideInBytes = sizeof(m_vertex[0]);					// 一頂点のバイト数
 
 
 	// ここからインデックスビュー
 	unsigned short indices[] = {
 		0,1,2,
-		2,1,3
+		3,4,5,
+		6,7,8,
+		9,10,11,
+		12,13,14,
+		15,16,17,
+		18,19,20,
+		21,22,23,
+		24,25,26,
+		27,28,29,
+		30,31,32,
+		33,34,35,
 	};
+
+	indexSize = sizeof(indices);
 
 	CD3DX12_HEAP_PROPERTIES indexHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 	CD3DX12_RESOURCE_DESC indexResourceDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices));
@@ -1112,6 +1198,16 @@ bool DirectGraphics::CreateInputLayout()
 		// 頂点情報
 		{
 			"POSITION",									// セマンティクス
+			0,
+			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
+			0,											// 入力スロットインデックス
+			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
+		// 法線情報
+		{
+			"NORMAL",									// セマンティクス
 			0,
 			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
 			0,											// 入力スロットインデックス
