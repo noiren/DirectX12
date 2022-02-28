@@ -22,6 +22,8 @@ std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
 
 size_t indexSize = 0;
 
+Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_heapForSpriteFont;
+
 
 DirectGraphics::VertexObj vertices[] =
 {
@@ -65,7 +67,10 @@ DirectGraphics::DirectGraphics():
 	m_angle(XM_PIDIV4),
 	m_size(0.f),
 	m_pos(),
-	m_directInput(nullptr)
+	m_directInput(nullptr),
+	m_gmemory(nullptr),
+	m_spritefont(nullptr),
+	m_spritebatch(nullptr)
 {
 	// テクスチャのデータ作る
 	// これはノイズ画像になるはずです。
@@ -300,6 +305,54 @@ void DirectGraphics::LoadObj()
 void DirectGraphics::CreateDirectInput(HWND& hwnd)
 {
 	m_directInput = new Input(hwnd);
+}
+
+bool DirectGraphics::CreateSpriteBatch()
+{
+	m_gmemory = new DirectX::GraphicsMemory(m_device);
+
+	DirectX::ResourceUploadBatch resUploadBatch(m_device);
+	resUploadBatch.Begin();
+	DirectX::RenderTargetState rtState(
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_D32_FLOAT
+	);
+	DirectX::SpriteBatchPipelineStateDescription pd(rtState);
+
+	m_spritebatch = new DirectX::SpriteBatch(m_device, resUploadBatch,pd);
+
+	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> ret;
+	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+	desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	desc.NodeMask = 0;
+	desc.NumDescriptors = 1;
+	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(ret.ReleaseAndGetAddressOf()));
+
+	m_heapForSpriteFont = ret;
+
+	m_spritefont = new DirectX::SpriteFont(m_device, resUploadBatch, L"font/fonttest.spritefont", m_heapForSpriteFont->GetCPUDescriptorHandleForHeapStart(), m_heapForSpriteFont->GetGPUDescriptorHandleForHeapStart());
+	auto future = resUploadBatch.End(m_cmdQueue);
+
+	//仮に初回として_fenceValueが0だったとします
+	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+	//↑の命令直後では_fenceValueは1で、
+	//GetCompletedValueはまだ0です。
+	if (m_fence->GetCompletedValue() < m_fenceVal) {
+		//もしまだ終わってないなら、イベント待ちを行う
+		//↓そのためのイベント？あとそのための_fenceValue
+		auto event = CreateEvent(nullptr, false, false, nullptr);
+		//フェンスに対して、CompletedValueが_fenceValueに
+		//なったら指定のイベントを発生させるという命令↓
+		m_fence->SetEventOnCompletion(m_fenceVal, event);
+		//↑まだイベント発生しない
+		//↓イベントが発生するまで待つ
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event);
+	}
+	future.wait();
+
+
 }
 
 bool DirectGraphics::CreateDevice()

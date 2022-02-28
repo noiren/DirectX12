@@ -4,9 +4,12 @@
 #include <vector>
 #include <DirectXMath.h>
 #include <DirectXTex.h>
+#include <SpriteFont.h>
+#include <ResourceUploadBatch.h>
 #include "DirectInput.h"
 
 #pragma comment(lib,"DirectXTex.lib")
+#pragma comment(lib,"DirectXTK12.lib")
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
 
@@ -50,6 +53,7 @@ private:
 
 	// èâä˙âªån
 	void LoadObj();
+	bool CreateSpriteBatch();
 	void CreateDirectInput(HWND& hwnd);
 	bool CreateDevice();
 	bool CreateCommand();
@@ -120,4 +124,8 @@ private:
 	float m_size;
 
 	Input* m_directInput;
+
+	DirectX::GraphicsMemory* m_gmemory;
+	DirectX::SpriteFont* m_spritefont;
+	DirectX::SpriteBatch* m_spritebatch;
 };
