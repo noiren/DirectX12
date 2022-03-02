@@ -6,6 +6,7 @@
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
 #include <d3dx12.h>
+#include <math.h>
 
 #pragma comment(lib,"d3d12.lib")
 #pragma comment(lib,"dxgi.lib")
@@ -17,6 +18,13 @@ namespace {
 	const float WINDOW_WIDTH = 1280.f;
 	const float WINDOW_HEIGHT = 720.f;
 }
+
+template <typename T> std::wstring toWstr(T tep)
+{
+	std::wstringstream ss;
+	ss << tep;
+	return ss.str();
+};
 
 std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
 
@@ -50,6 +58,8 @@ DirectGraphics::DirectGraphics():
 	m_indexBuff(nullptr),
 	m_texBuff(nullptr),
 	m_constBuff(nullptr),
+	m_depthBuff(nullptr),
+	m_dsvHeap(nullptr),
 	m_worldMat(),
 	m_viewMat(),
 	m_projMat(),
@@ -64,9 +74,12 @@ DirectGraphics::DirectGraphics():
 	m_scissorrect(),
 	m_metadata(),
 	m_vertex(),
-	m_angle(XM_PIDIV4),
-	m_size(0.f),
+	m_angleX(),
+	m_angleY(),
+	m_size(1.f),
 	m_pos(),
+	m_eye(),
+	m_target(),
 	m_directInput(nullptr),
 	m_gmemory(nullptr),
 	m_spritefont(nullptr),
@@ -137,7 +150,17 @@ bool DirectGraphics::Init(HWND& hwnd)
 		return false;
 	}
 
+	if (CreateDepthBuffer() == false)
+	{
+		return false;
+	}
+
 	if (CreateShaderConstResourceView() == false)
+	{
+		return false;
+	}
+
+	if (CreateDepthBufferView() == false)
 	{
 		return false;
 	}
@@ -158,6 +181,8 @@ bool DirectGraphics::Init(HWND& hwnd)
 	}
 
 	setViewPort();
+
+	CreateSpriteBatch();
 	return true;
 }
 
@@ -314,7 +339,7 @@ bool DirectGraphics::CreateSpriteBatch()
 	DirectX::ResourceUploadBatch resUploadBatch(m_device);
 	resUploadBatch.Begin();
 	DirectX::RenderTargetState rtState(
-		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
 		DXGI_FORMAT_D32_FLOAT
 	);
 	DirectX::SpriteBatchPipelineStateDescription pd(rtState);
@@ -327,7 +352,11 @@ bool DirectGraphics::CreateSpriteBatch()
 	desc.NodeMask = 0;
 	desc.NumDescriptors = 1;
 	desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(ret.ReleaseAndGetAddressOf()));
+	auto result = m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(ret.ReleaseAndGetAddressOf()));
+	if (result != S_OK)
+	{
+		return false;
+	}
 
 	m_heapForSpriteFont = ret;
 
@@ -352,7 +381,9 @@ bool DirectGraphics::CreateSpriteBatch()
 	}
 	future.wait();
 
+	m_spritebatch->SetViewport(m_viewport);
 
+	return true;
 }
 
 bool DirectGraphics::CreateDevice()
@@ -570,11 +601,15 @@ bool DirectGraphics::SetupSwapChain()
 
 	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-	m_cmdList->OMSetRenderTargets(1, &rtvH, true, nullptr);
+	auto dsvH = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	m_cmdList->OMSetRenderTargets(1, &rtvH, true, &dsvH);
 
 	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
 
 	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
+
+	m_cmdList->ClearDepthStencilView(dsvH, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
 	m_cmdList->RSSetViewports(1, &m_viewport);
 
@@ -600,6 +635,8 @@ bool DirectGraphics::SetupSwapChain()
 	);
 
 	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
+
+	RenderText();
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -636,9 +673,24 @@ void DirectGraphics::Render()
 	{
 		return;
 	}
-	m_swapChain->Present(1, 0);
-
 	SetRotate();
+	m_swapChain->Present(0, 0);
+	//m_gmemory->Commit(m_cmdQueue);
+}
+
+void DirectGraphics::RenderText()
+{
+	std::wstring modelXYZ = L"modelPos :(" + toWstr(m_pos.x * 64.f) + L"," + toWstr(m_pos.y * 60.f) + L", 0)";
+	std::wstring cameraEye = L"cameraEyePos :(" + toWstr(m_eye.x) + L"," + toWstr(m_eye.y) + L"," + toWstr(m_eye.z) + L")";
+	std::wstring cameraTarget = L"cameraTargetPos :(" + toWstr(m_target.x) + L"," + toWstr(m_target.y) + L"," + toWstr(m_target.z) + L")";
+
+	m_cmdList->SetDescriptorHeaps(1, m_heapForSpriteFont.GetAddressOf());
+	m_spritebatch->Begin(m_cmdList);
+	m_spritefont->DrawString(m_spritebatch, modelXYZ.c_str(), DirectX::XMFLOAT2(0, 0), DirectX::Colors::Black);
+	m_spritefont->DrawString(m_spritebatch, cameraEye.c_str(), DirectX::XMFLOAT2(0, 70), DirectX::Colors::Black);
+	m_spritefont->DrawString(m_spritebatch, cameraTarget.c_str(), DirectX::XMFLOAT2(0, 140), DirectX::Colors::Black);
+	m_spritebatch->End();
+
 }
 
 void DirectGraphics::SetRotate()
@@ -646,65 +698,57 @@ void DirectGraphics::SetRotate()
 	// X軸方向回転
 	if (m_directInput->CheckKey(static_cast<UINT>(DIK_8)))
 	{
-		m_angle += 0.1f;
-		m_worldMat = XMMatrixRotationX(m_angle);
+		m_angleX += 0.1f;
 	}
 	if (m_directInput->CheckKey(DIK_2))
 	{
-		m_angle -= 0.1f;
-		m_worldMat = XMMatrixRotationX(m_angle);
+		m_angleX -= 0.1f;
 	}
 	
 	// Y軸方向回転
 	if (m_directInput->CheckKey(DIK_4))
 	{
-		m_angle += 0.1f;
-		m_worldMat = XMMatrixRotationY(m_angle);
+		m_angleY += 0.1f;
 	}
 	if (m_directInput->CheckKey(DIK_6))
 	{
-		m_angle -= 0.1f;
-		m_worldMat = XMMatrixRotationY(m_angle);
+		m_angleY -= 0.1f;
 	}
 
 
 	// X軸平行移動
 	if (m_directInput->CheckKey(DIK_LEFT))
 	{
-		m_pos.x -= 0.1f;
-		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+		m_pos.x -= 0.01f;
 	}
 	if (m_directInput->CheckKey(DIK_RIGHT))
 	{
-		m_pos.x += 0.1f;
-		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+		m_pos.x += 0.01f;
 	}
 
 	// Y軸平行移動
 	if (m_directInput->CheckKey(DIK_UP))
 	{
-		m_pos.y += 0.1f;
-		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+		m_pos.y += 0.01f;
 	}
 	if (m_directInput->CheckKey(DIK_DOWN))
 	{
-		m_pos.y -= 0.1f;
-		m_worldMat = XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+		m_pos.y -= 0.01f;
 	}
 
 	if (m_directInput->CheckKey(DIK_D))
 	{
 		m_size -= 0.1f;
-		m_worldMat = XMMatrixScaling(m_size, m_size, 0);
 	}
 	if (m_directInput->CheckKey(DIK_F))
 	{
 		m_size += 0.1f;
-		m_worldMat = XMMatrixScaling(m_size, m_size, 0);
 	}
 
+	m_worldMat = XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0) * XMMatrixScaling(m_size, m_size, 0);
 
-	*m_constMapMatrix = m_worldMat * m_viewMat * m_projMat;
+	m_constMapMatrix->world = m_worldMat;
+	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
 	
 }
 
@@ -831,13 +875,17 @@ bool DirectGraphics::CreateConstantBuffer()
 	// 45°y軸方向に回転(ワールド行列)
 	XMMATRIX matrix = m_worldMat = XMMatrixRotationY(XM_PIDIV4);
 
-	XMFLOAT3 eye(0, 0, -5);		// 視点座標
-	XMFLOAT3 target(0, 0, 0);	// 注視点座標
+	m_eye.x = 0;
+	m_eye.y = 0;
+	m_eye.z = -5;
+
+	m_target = XMFLOAT3(0, 0, 0);
+
 	XMFLOAT3 up(0, 1, 0);		// 上ベクトル
 
 	// ビュー行列
-	m_viewMat = XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&target), XMLoadFloat3(&up));
-	matrix *= m_viewMat;
+	m_viewMat = XMMatrixLookAtLH(XMLoadFloat3(&m_eye), XMLoadFloat3(&m_target), XMLoadFloat3(&up));
+	//matrix *= m_viewMat;
 
 	// プロジェクション行列
 	m_projMat = XMMatrixPerspectiveFovLH(
@@ -846,10 +894,10 @@ bool DirectGraphics::CreateConstantBuffer()
 		1.0f,
 		10.0f
 	);
-	matrix *= m_projMat;
+	//matrix *= m_projMat;
 
 	CD3DX12_HEAP_PROPERTIES constHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC constResDesc = CD3DX12_RESOURCE_DESC::Buffer((sizeof(matrix) + 0xff) & ~0xff); // 強制的に256の倍数にさせる
+	CD3DX12_RESOURCE_DESC constResDesc = CD3DX12_RESOURCE_DESC::Buffer((sizeof(MatricesData) + 0xff) & ~0xff); // 強制的に256の倍数にさせる
 
 	// 定数バッファの作成
 	auto result = 
@@ -867,7 +915,8 @@ bool DirectGraphics::CreateConstantBuffer()
 	}
 
 	result = m_constBuff->Map(0, nullptr, (void**)&m_constMapMatrix);
-	*m_constMapMatrix = matrix; // 今まではstd::copyを使っていたがこのように代入演算子を使ってもOK
+	m_constMapMatrix->world = m_worldMat;
+	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
 
 	return true;
 }
@@ -1072,6 +1121,37 @@ bool DirectGraphics::CreateTextureBuffer()
 	return true;
 }
 
+bool DirectGraphics::CreateDepthBuffer()
+{
+	D3D12_RESOURCE_DESC depthResDesc = {};
+	depthResDesc.Dimension =
+		D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthResDesc.Width = WINDOW_WIDTH;
+	depthResDesc.Height = WINDOW_HEIGHT;
+	depthResDesc.DepthOrArraySize = 1;
+	depthResDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	depthResDesc.SampleDesc.Count = 1;
+	depthResDesc.Flags =
+		D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_HEAP_PROPERTIES depthHeapProp = {};
+	depthHeapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+	depthHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	depthHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+	D3D12_CLEAR_VALUE depthClearValue = {};
+	depthClearValue.DepthStencil.Depth = 1.0f;
+	depthClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+
+	auto result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(&m_depthBuff));
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	return true;
+}
+
 bool DirectGraphics::CreateShaderConstResourceView()
 {
 	// テクスチャや定数バッファに関するビューはディスクリプタヒープ上に作る
@@ -1117,6 +1197,28 @@ bool DirectGraphics::CreateShaderConstResourceView()
 		m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	m_device->CreateConstantBufferView(&cbvDesc, descHeapHandle);
+
+	return true;
+}
+
+bool DirectGraphics::CreateDepthBufferView()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.NumDescriptors = 1;
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_dsvHeap));
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+
+	m_device->CreateDepthStencilView(m_depthBuff, &dsvDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
 
 	return true;
 }
@@ -1305,6 +1407,12 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.RasterizerState.AntialiasedLineEnable = false;
 	gpipeline.RasterizerState.ForcedSampleCount = 0;
 	gpipeline.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+	gpipeline.DepthStencilState.DepthEnable = true;
+	gpipeline.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	gpipeline.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+
+	gpipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
 
 	// ブレンドステートの設定

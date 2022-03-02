@@ -32,6 +32,8 @@ public:
 
 	void Render();
 
+	void RenderText();
+
 	void SetRotate();
 
 	struct Vertex {
@@ -43,6 +45,11 @@ public:
 		XMFLOAT3 pos;		// 頂点座標
 		XMFLOAT3 normal;	// 法線ベクトル
 		XMFLOAT2 uv;		// uv座標
+	};
+
+	struct MatricesData {
+		XMMATRIX world;
+		XMMATRIX viewproj;
 	};
 
 	struct TexRGBA {
@@ -67,7 +74,9 @@ private:
 	bool CreateVertexBuffer();
 	bool CreateTextureBuffer();
 	bool CreateConstantBuffer();
+	bool CreateDepthBuffer();
 	bool CreateShaderConstResourceView();
+	bool CreateDepthBufferView();
 	bool CreateRootSignature();
 	bool CreateShader();
 	bool CreateInputLayout();
@@ -101,11 +110,14 @@ private:
 
 	ID3D12Resource* m_constBuff; // 定数バッファ
 
+	ID3D12Resource* m_depthBuff; // 深度バッファ
+	ID3D12DescriptorHeap* m_dsvHeap; // ディスクリプタヒープ
+
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列
 
-	XMMATRIX* m_constMapMatrix; // マップしたマップ行列
+	MatricesData* m_constMapMatrix; // マップしたマップ行列
 
 	ID3D12Resource* m_pUploadBuff; // アップロードリソース
 
@@ -119,9 +131,13 @@ private:
 	DirectX::TexMetadata m_metadata;
 	std::vector<VertexObj> m_vertex;
 
-	float m_angle;
+	float m_angleX;
+	float m_angleY;
 	XMFLOAT3 m_pos;
 	float m_size;
+
+	XMFLOAT3 m_eye;
+	XMFLOAT3 m_target;
 
 	Input* m_directInput;
 
