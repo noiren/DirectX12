@@ -738,14 +738,14 @@ void DirectGraphics::SetRotate()
 
 	if (m_directInput->CheckKey(DIK_D))
 	{
-		m_size -= 0.1f;
+		m_size -= 0.01f;
 	}
 	if (m_directInput->CheckKey(DIK_F))
 	{
-		m_size += 0.1f;
+		m_size += 0.01f;
 	}
 
-	m_worldMat = XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0) * XMMatrixScaling(m_size, m_size, 0);
+	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
 
 	m_constMapMatrix->world = m_worldMat;
 	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
@@ -873,7 +873,7 @@ bool DirectGraphics::CreateVertexBuffer()
 bool DirectGraphics::CreateConstantBuffer()
 {
 	// 45Åãyé≤ï˚å¸Ç…âÒì](ÉèÅ[ÉãÉhçsóÒ)
-	XMMATRIX matrix = m_worldMat = XMMatrixRotationY(XM_PIDIV4);
+	XMMATRIX matrix = m_worldMat = XMMatrixIdentity();
 
 	m_eye.x = 0;
 	m_eye.y = 0;
@@ -930,7 +930,7 @@ bool DirectGraphics::CreateTextureBuffer()
 	ScratchImage scratchImg = {};
 
 	result = LoadFromWICFile(
-		L"kato.png",
+		L"inu.png",
 		WIC_FLAGS_NONE,
 		&m_metadata,
 		scratchImg
@@ -1133,6 +1133,10 @@ bool DirectGraphics::CreateDepthBuffer()
 	depthResDesc.SampleDesc.Count = 1;
 	depthResDesc.Flags =
 		D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+	depthResDesc.MipLevels = 1;
+	depthResDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	depthResDesc.Alignment = 0;
+
 
 	D3D12_HEAP_PROPERTIES depthHeapProp = {};
 	depthHeapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
