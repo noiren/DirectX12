@@ -16,6 +16,7 @@ using namespace DirectX;
 namespace {
 	const float WINDOW_WIDTH = 1280.f;
 	const float WINDOW_HEIGHT = 720.f;
+	const size_t PMDVERTEX_SIZE = 38;
 }
 
 std::vector<DirectGraphics::TexRGBA> textureData(256 * 256);
@@ -46,6 +47,8 @@ DirectGraphics::DirectGraphics():
 	m_indexBuff(nullptr),
 	m_texBuff(nullptr),
 	m_constBuff(nullptr),
+	m_depthBuff(nullptr),
+	m_pDepthDescHeap(nullptr),
 	m_worldMat(),
 	m_viewMat(),
 	m_projMat(),
@@ -61,7 +64,9 @@ DirectGraphics::DirectGraphics():
 	m_metadata(),
 	m_vertex(),
 	m_modelVertices(),
+	m_modelIndices(),
 	m_vertNum(0),
+	m_indicesNum(0),
 	m_angle(XM_PIDIV4)
 {
 	// テクスチャのデータ作る
@@ -125,6 +130,16 @@ bool DirectGraphics::Init(HWND& hwnd)
 	}
 
 	if (CreateConstantBuffer() == false)
+	{
+		return false;
+	}
+
+	if (CreateDepthBuffer() == false)
+	{
+		return false;
+	}
+
+	if (CreateDepthDescriptorHeap() == false)
 	{
 		return false;
 	}
@@ -295,8 +310,6 @@ void DirectGraphics::LoadObj()
 void DirectGraphics::LoadModel()
 {
 
-	constexpr size_t pmdvertex_size = 38;
-
 	char signature[3];
 	PMDHeader pmdheader = {};
 	FILE* fp;
@@ -308,16 +321,22 @@ void DirectGraphics::LoadModel()
 	fread(signature, sizeof(signature), 1, fp);
 	fread(&pmdheader, sizeof(pmdheader), 1, fp);
 
-
+	// 頂点数読み込み
 	fread(&m_vertNum, sizeof(m_vertNum), 1, fp);
 
-	std::vector<PMDVertex> modelvertices(m_vertNum);
-	for (auto i = 0; i < m_vertNum; i++)
-	{
-		fread(&modelvertices[i], pmdvertex_size, 1, fp);
-	}
-	std::copy(modelvertices.begin(), modelvertices.end(), std::back_inserter(m_modelVertices));
-	m_modelVertices = modelvertices;
+	std::vector<unsigned char> vertices(m_vertNum * PMDVERTEX_SIZE);
+	
+	// 頂点データ読み込み
+	fread(vertices.data(), vertices.size(), 1, fp);
+	
+	// インデックス数読み込み
+	fread(&m_indicesNum, sizeof(m_indicesNum), 1, fp);
+
+	m_modelIndices.resize(m_indicesNum);
+
+	fread(m_modelIndices.data(), m_modelIndices.size() * sizeof(m_modelIndices[0]), 1, fp);
+
+	m_modelVertices = vertices;
 	fclose(fp);
 }
 
@@ -427,6 +446,7 @@ bool DirectGraphics::CreateSwapChain(HWND& hwnd)
 
 	swapchainDesc.Scaling = DXGI_SCALING_STRETCH;
 
+	// フリップした後は破棄
 	swapchainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
 	swapchainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
@@ -534,13 +554,17 @@ bool DirectGraphics::SetupSwapChain()
 
 	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
 
+	auto dsvH = m_pDepthDescHeap->GetCPUDescriptorHandleForHeapStart();
+
 	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-	m_cmdList->OMSetRenderTargets(1, &rtvH, true, nullptr);
+	m_cmdList->OMSetRenderTargets(1, &rtvH, true, &dsvH);
 
 	float clearColor[] = { 1.0f,1.0f,1.0f,1.0f }; // 白色
 
 	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
+
+	m_cmdList->ClearDepthStencilView(dsvH, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr); // 深度バッファーのクリア
 
 	m_cmdList->RSSetViewports(1, &m_viewport);
 
@@ -548,7 +572,7 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); // ルートシグネチャの設定
 
-	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);// プリミティブトポロジの設定
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
 
 	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);// 頂点バッファビューの設定
 
@@ -565,7 +589,7 @@ bool DirectGraphics::SetupSwapChain()
 		heapHandle
 	);
 
-	m_cmdList->DrawInstanced(m_vertNum, 1, 0, 0);
+	m_cmdList->DrawIndexedInstanced(m_indicesNum, 1, 0, 0, 0);
 
 	// コマンドリストの実行
 	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -604,14 +628,16 @@ void DirectGraphics::Render()
 	}
 	m_swapChain->Present(1, 0);
 
-	Rotate();
+	//Rotate();
 }
 
 void DirectGraphics::Rotate()
 {
+
 	m_angle += 0.1f;
 	m_worldMat = XMMatrixScaling(m_angle, m_angle, 0.f);
 	*m_constMapMatrix = m_worldMat * m_viewMat * m_projMat;
+	
 }
 
 void DirectGraphics::EnableDebugLayer()
@@ -647,7 +673,7 @@ bool DirectGraphics::CreateVertexBuffer()
 	// 頂点の大きさ分の空きをメモリに作る
 
 	CD3DX12_HEAP_PROPERTIES heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(m_modelVertices));
+	CD3DX12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(m_modelVertices.size());
 
 	if (FAILED(m_device->CreateCommittedResource(
 		&heapProp, // UPLOADヒープとして使用する
@@ -661,14 +687,14 @@ bool DirectGraphics::CreateVertexBuffer()
 		return false;
 	}
 
-	PMDVertex* vertMap = nullptr;
+	unsigned char* vertMap = nullptr;
 
 	if (FAILED(m_vertBuff->Map(0, nullptr, (void**)&vertMap)))// 確保したバッファの仮想アドレスを取得する
 	{
 		return false;
 	}
 
-	std::copy(m_modelVertices.begin(), m_modelVertices.end(), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
+	std::copy(std::begin(m_modelVertices), std::end(m_modelVertices), vertMap);// 実際にそのアドレスを編集すればOK!(今回はそのアドレスに頂点情報を流し込んでいる)
 
 	m_vertBuff->Unmap(0, nullptr);
 
@@ -676,18 +702,14 @@ bool DirectGraphics::CreateVertexBuffer()
 	m_vbView = {};
 
 	m_vbView.BufferLocation = m_vertBuff->GetGPUVirtualAddress(); // バッファの仮想アドレス
-	m_vbView.SizeInBytes = sizeof(m_modelVertices);						// 全バイト数
-	m_vbView.StrideInBytes = sizeof(m_modelVertices[0]);					// 一頂点のバイト数
+	m_vbView.SizeInBytes = m_modelVertices.size();					// 全バイト数
+	m_vbView.StrideInBytes = PMDVERTEX_SIZE;				// 一頂点のバイト数
 
 
 	// ここからインデックスビュー
-	unsigned short indices[] = {
-		0,1,2,
-		2,1,3
-	};
 
 	CD3DX12_HEAP_PROPERTIES indexHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC indexResourceDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices));
+	CD3DX12_RESOURCE_DESC indexResourceDesc = CD3DX12_RESOURCE_DESC::Buffer(m_modelIndices.size() * sizeof(m_modelIndices[0]));
 
 	if (FAILED(m_device->CreateCommittedResource(
 		&indexHeapProp, // UPLOADヒープとして使用する
@@ -707,14 +729,14 @@ bool DirectGraphics::CreateVertexBuffer()
 		return false;
 	}
 
-	std::copy(std::begin(indices), std::end(indices), mappedIdx);
+	std::copy(std::begin(m_modelIndices), std::end(m_modelIndices), mappedIdx);
 	m_indexBuff->Unmap(0, nullptr);
 
 	m_ibView = {};
 
 	m_ibView.BufferLocation = m_indexBuff->GetGPUVirtualAddress();
 	m_ibView.Format = DXGI_FORMAT_R16_UINT;
-	m_ibView.SizeInBytes = sizeof(indices);
+	m_ibView.SizeInBytes = m_modelIndices.size() * sizeof(m_modelIndices[0]);
 
 
 	return true;
@@ -723,9 +745,9 @@ bool DirectGraphics::CreateVertexBuffer()
 bool DirectGraphics::CreateConstantBuffer()
 {
 	// 45°y軸方向に回転(ワールド行列)
-	XMMATRIX matrix;
+	XMMATRIX matrix = m_worldMat = XMMatrixIdentity();
 
-	XMFLOAT3 eye(0, 10, -15);		// 視点座標
+	XMFLOAT3 eye(0, 10, -15);	// 視点座標
 	XMFLOAT3 target(0, 10, 0);	// 注視点座標
 	XMFLOAT3 up(0, 1, 0);		// 上ベクトル
 
@@ -743,7 +765,7 @@ bool DirectGraphics::CreateConstantBuffer()
 	matrix *= m_projMat;
 
 	CD3DX12_HEAP_PROPERTIES constHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC constResDesc = CD3DX12_RESOURCE_DESC::Buffer((sizeof(matrix) + 0xff) & ~0xff); // 強制的に256の倍数にさせる
+	CD3DX12_RESOURCE_DESC constResDesc = CD3DX12_RESOURCE_DESC::Buffer((sizeof(MatricesData) + 0xff) & ~0xff); // 強制的に256の倍数にさせる
 
 	// 定数バッファの作成
 	auto result = 
@@ -760,8 +782,11 @@ bool DirectGraphics::CreateConstantBuffer()
 		return false;
 	}
 
-	result = m_constBuff->Map(0, nullptr, (void**)&m_constMapMatrix);
-	*m_constMapMatrix = matrix; // 今まではstd::copyを使っていたがこのように代入演算子を使ってもOK
+	MatricesData* mapMatrix;
+
+	result = m_constBuff->Map(0, nullptr, (void**)&mapMatrix);
+	mapMatrix->world = m_worldMat;
+	mapMatrix->viewproj = m_viewMat * m_projMat;
 
 	return true;
 }
@@ -962,6 +987,71 @@ bool DirectGraphics::CreateTextureBuffer()
 	}
 	m_cmdAllocator->Reset();//キューをクリア
 	m_cmdList->Reset(m_cmdAllocator, nullptr);
+
+	return true;
+}
+
+bool DirectGraphics::CreateDepthBuffer()
+{
+	// 深度バッファの作成
+	D3D12_RESOURCE_DESC depthResDesc = {};
+	depthResDesc.Dimension =
+		D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthResDesc.Width = WINDOW_WIDTH;
+	depthResDesc.Height = WINDOW_HEIGHT;
+	depthResDesc.DepthOrArraySize = 1;
+	depthResDesc.Format = DXGI_FORMAT_D32_FLOAT; // 深度値書き込み用フォーマット
+	depthResDesc.SampleDesc.Count = 1;
+	depthResDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_HEAP_PROPERTIES depthHeapProp = {};
+	depthHeapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+	depthHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	depthHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+	D3D12_CLEAR_VALUE depthClearValue = {};
+	depthClearValue.DepthStencil.Depth = 1.0f; // 深さ1.0f(最大値)でクリア
+	depthClearValue.Format = DXGI_FORMAT_D32_FLOAT; // 32ビットfloat値としてクリア
+
+	auto result =
+		m_device->CreateCommittedResource(
+			&depthHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&depthResDesc,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			&depthClearValue,
+			IID_PPV_ARGS(&m_depthBuff));
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool DirectGraphics::CreateDepthDescriptorHeap()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.NumDescriptors = 1;
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV; // デプスステンシルビュー
+	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_pDepthDescHeap));
+
+	if (result != S_OK)
+	{
+		return false;
+	}
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+
+	m_device->CreateDepthStencilView(
+		m_depthBuff,
+		&dsvDesc,
+		m_pDepthDescHeap->GetCPUDescriptorHandleForHeapStart()
+	);
 
 	return true;
 }
@@ -1229,6 +1319,14 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.RasterizerState.AntialiasedLineEnable = false;
 	gpipeline.RasterizerState.ForcedSampleCount = 0;
 	gpipeline.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+	// 深度バッファー周りの設定
+	gpipeline.DepthStencilState.DepthEnable = true;
+	gpipeline.DepthStencilState.StencilEnable = false;
+	gpipeline.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL; // ピクセル描画時に深度バッファーに深度地を書き込むこと
+	gpipeline.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS; // 深度値が小さいほうを採用する
+
+	gpipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT; // 32ビットfloatを深度値として使用する
 
 
 	// ブレンドステートの設定

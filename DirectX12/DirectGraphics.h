@@ -60,6 +60,11 @@ public:
 		unsigned char R, G, B, A;
 	};
 
+	struct MatricesData {
+		XMMATRIX world;
+		XMMATRIX viewproj;
+	};
+
 private:
 
 	// 初期化系
@@ -78,6 +83,8 @@ private:
 	bool CreateVertexBuffer();
 	bool CreateTextureBuffer();
 	bool CreateConstantBuffer();
+	bool CreateDepthBuffer();
+	bool CreateDepthDescriptorHeap();
 	bool CreateShaderConstResourceView();
 	bool CreateRootSignature();
 	bool CreateShader();
@@ -112,6 +119,9 @@ private:
 
 	ID3D12Resource* m_constBuff; // 定数バッファ
 
+	ID3D12Resource* m_depthBuff; // 深度バッファ
+	ID3D12DescriptorHeap* m_pDepthDescHeap;
+
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列
@@ -129,7 +139,9 @@ private:
 
 	DirectX::TexMetadata m_metadata;
 	std::vector<VertexObj> m_vertex;
-	std::vector<PMDVertex> m_modelVertices;
+	std::vector<unsigned char> m_modelVertices;
+	std::vector<unsigned short> m_modelIndices;
 	unsigned int m_vertNum;
+	unsigned int m_indicesNum;
 	float m_angle;
 };
