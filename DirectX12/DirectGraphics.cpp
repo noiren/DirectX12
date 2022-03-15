@@ -191,15 +191,11 @@ bool DirectGraphics::Init(HWND& hwnd)
 
 void DirectGraphics::Release()
 {
-	// TODO: 要精査
+	// これ以外はComPtrにて管理
 	delete(m_directInput);
-	delete(m_rtvHeaps);	
-	delete(m_cmdQueue);
-	delete(m_cmdList);
-	delete(m_cmdAllocator);
-	delete(m_swapChain);
-	delete(m_dxgiFactory);
-	delete(m_device);
+	delete(m_gmemory);
+	delete(m_spritefont);
+	delete(m_spritebatch);
 }
 
 void DirectGraphics::LoadObj()
@@ -334,9 +330,9 @@ void DirectGraphics::CreateDirectInput(HWND& hwnd)
 
 bool DirectGraphics::CreateSpriteBatch()
 {
-	m_gmemory = new DirectX::GraphicsMemory(m_device);
+	m_gmemory = new DirectX::GraphicsMemory(m_device.Get());
 
-	DirectX::ResourceUploadBatch resUploadBatch(m_device);
+	DirectX::ResourceUploadBatch resUploadBatch(m_device.Get());
 	resUploadBatch.Begin();
 	DirectX::RenderTargetState rtState(
 		DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
@@ -344,7 +340,7 @@ bool DirectGraphics::CreateSpriteBatch()
 	);
 	DirectX::SpriteBatchPipelineStateDescription pd(rtState);
 
-	m_spritebatch = new DirectX::SpriteBatch(m_device, resUploadBatch,pd);
+	m_spritebatch = new DirectX::SpriteBatch(m_device.Get(), resUploadBatch,pd);
 
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> ret;
 	D3D12_DESCRIPTOR_HEAP_DESC desc = {};
@@ -360,11 +356,11 @@ bool DirectGraphics::CreateSpriteBatch()
 
 	m_heapForSpriteFont = ret;
 
-	m_spritefont = new DirectX::SpriteFont(m_device, resUploadBatch, L"font/fonttest.spritefont", m_heapForSpriteFont->GetCPUDescriptorHandleForHeapStart(), m_heapForSpriteFont->GetGPUDescriptorHandleForHeapStart());
-	auto future = resUploadBatch.End(m_cmdQueue);
+	m_spritefont = new DirectX::SpriteFont(m_device.Get(), resUploadBatch, L"font/fonttest.spritefont", m_heapForSpriteFont->GetCPUDescriptorHandleForHeapStart(), m_heapForSpriteFont->GetGPUDescriptorHandleForHeapStart());
+	auto future = resUploadBatch.End(m_cmdQueue.Get());
 
 	//仮に初回として_fenceValueが0だったとします
-	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
 	//↑の命令直後では_fenceValueは1で、
 	//GetCompletedValueはまだ0です。
 	if (m_fence->GetCompletedValue() < m_fenceVal) {
@@ -388,7 +384,7 @@ bool DirectGraphics::CreateSpriteBatch()
 
 bool DirectGraphics::CreateDevice()
 {
-	auto result = CreateDXGIFactory1(IID_PPV_ARGS(&m_dxgiFactory));
+	auto result = CreateDXGIFactory1(IID_PPV_ARGS(m_dxgiFactory.ReleaseAndGetAddressOf()));
 
 	std::vector<IDXGIAdapter*> adapters;
 
@@ -432,7 +428,7 @@ bool DirectGraphics::CreateDevice()
 
 	for (auto lv : levels)
 	{
-		if (D3D12CreateDevice(tmpAdapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&m_device)) == S_OK)
+		if (D3D12CreateDevice(tmpAdapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(m_device.ReleaseAndGetAddressOf())) == S_OK)
 		{
 			featureLevel = lv;
 			return true;
@@ -445,8 +441,8 @@ bool DirectGraphics::CreateCommand()
 {
 	if (m_device != nullptr)
 	{
-		if (m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAllocator)) == S_OK &&
-			m_device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,m_cmdAllocator,nullptr,IID_PPV_ARGS(&m_cmdList)) == S_OK)
+		if (m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(m_cmdAllocator.ReleaseAndGetAddressOf())) == S_OK &&
+			m_device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,m_cmdAllocator.Get(),nullptr,IID_PPV_ARGS(m_cmdList.ReleaseAndGetAddressOf())) == S_OK)
 		{
 			return true;
 		}
@@ -466,7 +462,7 @@ bool DirectGraphics::CreateCommandQueue()
 
 	cmdQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-	if (m_device->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&m_cmdQueue)) == S_OK)
+	if (m_device->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(m_cmdQueue.ReleaseAndGetAddressOf())) == S_OK)
 	{
 		return true;
 	}
@@ -499,12 +495,12 @@ bool DirectGraphics::CreateSwapChain(HWND& hwnd)
 	swapchainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
 	if (m_dxgiFactory->CreateSwapChainForHwnd(
-		m_cmdQueue,
+		m_cmdQueue.Get(),
 		hwnd,
 		&swapchainDesc,
 		nullptr,
 		nullptr,
-		(IDXGISwapChain1**)&m_swapChain
+		(IDXGISwapChain1**)m_swapChain.ReleaseAndGetAddressOf()
 	) == S_OK)
 	{
 		return true;
@@ -524,7 +520,7 @@ bool DirectGraphics::CreateDiscriptorHeap()
 	heapDesc.NumDescriptors = 2;// ディスクリプタは表・裏の二つ
 	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
-	if (m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_rtvHeaps)) == S_OK)
+	if (m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(m_rtvHeaps.ReleaseAndGetAddressOf())) == S_OK)
 	{
 		return true;
 	}
@@ -595,7 +591,7 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->ResourceBarrier(1, &BarrierDesc);
 
-	m_cmdList->SetPipelineState(m_pPipelineState); // パイプラインステートの設定
+	m_cmdList->SetPipelineState(m_pPipelineState.Get()); // パイプラインステートの設定
 
 	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
 
@@ -615,7 +611,7 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
 
-	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); // ルートシグネチャの設定
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
 
 	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
 
@@ -623,9 +619,9 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->IASetIndexBuffer(&m_ibView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけ)
 
-	m_cmdList->SetGraphicsRootSignature(m_pRootSignature); 
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); 
 
-	m_cmdList->SetDescriptorHeaps(1, &m_pDescHeap); // ディスクリプタヒープの設定
+	m_cmdList->SetDescriptorHeaps(1, m_pDescHeap.GetAddressOf()); // ディスクリプタヒープの設定
 
 	auto heapHandle = m_pDescHeap->GetGPUDescriptorHandleForHeapStart();
 
@@ -645,10 +641,10 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->Close(); // 実行前には必ずクローズすること！
 
-	ID3D12CommandList* cmdLists[] = { m_cmdList };
+	ID3D12CommandList* cmdLists[] = { m_cmdList.Get() };
 	m_cmdQueue->ExecuteCommandLists(1, cmdLists);
 
-	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
 
 	if (m_fence->GetCompletedValue() != m_fenceVal)
 	{
@@ -662,7 +658,7 @@ bool DirectGraphics::SetupSwapChain()
 	}
 
 	m_cmdAllocator->Reset();
-	m_cmdList->Reset(m_cmdAllocator, nullptr);
+	m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
 
 	return true;
 }
@@ -685,7 +681,7 @@ void DirectGraphics::RenderText()
 	std::wstring cameraTarget = L"cameraTargetPos :(" + toWstr(m_target.x) + L"," + toWstr(m_target.y) + L"," + toWstr(m_target.z) + L")";
 
 	m_cmdList->SetDescriptorHeaps(1, m_heapForSpriteFont.GetAddressOf());
-	m_spritebatch->Begin(m_cmdList);
+	m_spritebatch->Begin(m_cmdList.Get());
 	m_spritefont->DrawString(m_spritebatch, modelXYZ.c_str(), DirectX::XMFLOAT2(0, 0), DirectX::Colors::Black);
 	m_spritefont->DrawString(m_spritebatch, cameraEye.c_str(), DirectX::XMFLOAT2(0, 70), DirectX::Colors::Black);
 	m_spritefont->DrawString(m_spritebatch, cameraTarget.c_str(), DirectX::XMFLOAT2(0, 140), DirectX::Colors::Black);
@@ -767,7 +763,7 @@ bool DirectGraphics::CreateFence()
 	{
 		m_fenceVal = 0;
 
-		auto result = m_device->CreateFence(m_fenceVal, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
+		auto result = m_device->CreateFence(m_fenceVal, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(m_fence.ReleaseAndGetAddressOf()));
 
 		if (result == S_OK)
 		{
@@ -794,7 +790,7 @@ bool DirectGraphics::CreateVertexBuffer()
 
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		nullptr,
-		IID_PPV_ARGS(&m_vertBuff))))
+		IID_PPV_ARGS(m_vertBuff.ReleaseAndGetAddressOf()))))
 	{
 		return false;
 	}
@@ -846,7 +842,7 @@ bool DirectGraphics::CreateVertexBuffer()
 
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		nullptr,
-		IID_PPV_ARGS(&m_indexBuff))))
+		IID_PPV_ARGS(m_indexBuff.ReleaseAndGetAddressOf()))))
 	{
 		return false;
 	}
@@ -907,7 +903,7 @@ bool DirectGraphics::CreateConstantBuffer()
 		&constResDesc,
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		nullptr,
-		IID_PPV_ARGS(&m_constBuff));
+		IID_PPV_ARGS(m_constBuff.ReleaseAndGetAddressOf()));
 
 	if (result != S_OK)
 	{
@@ -1021,7 +1017,7 @@ bool DirectGraphics::CreateTextureBuffer()
 			&resDesc,
 			D3D12_RESOURCE_STATE_GENERIC_READ, // CPUから書き込み可能だが、GPUから見ると読み取り専用
 			nullptr,
-			IID_PPV_ARGS(&m_pUploadBuff)
+			IID_PPV_ARGS(m_pUploadBuff.ReleaseAndGetAddressOf())
 		);
 
 	}
@@ -1055,7 +1051,7 @@ bool DirectGraphics::CreateTextureBuffer()
 			&resDesc,
 			D3D12_RESOURCE_STATE_COPY_DEST, // コピー先
 			nullptr,
-			IID_PPV_ARGS(&m_texBuff)
+			IID_PPV_ARGS(m_texBuff.ReleaseAndGetAddressOf())
 		);
 
 	}
@@ -1070,7 +1066,7 @@ bool DirectGraphics::CreateTextureBuffer()
 	D3D12_TEXTURE_COPY_LOCATION src = {};
 
 	// コピー元(アップロード側)設定
-	src.pResource = m_pUploadBuff; // 中間バッファ
+	src.pResource = m_pUploadBuff.Get(); // 中間バッファ
 	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 	src.PlacedFootprint.Offset = 0;
 	src.PlacedFootprint.Footprint.Width = m_metadata.width;
@@ -1082,7 +1078,7 @@ bool DirectGraphics::CreateTextureBuffer()
 	D3D12_TEXTURE_COPY_LOCATION dst = {};
 
 	// コピー先の設定
-	dst.pResource = m_texBuff;
+	dst.pResource = m_texBuff.Get();
 	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 	dst.SubresourceIndex = 0;
 
@@ -1092,7 +1088,7 @@ bool DirectGraphics::CreateTextureBuffer()
 
 	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	BarrierDesc.Transition.pResource = m_texBuff;
+	BarrierDesc.Transition.pResource = m_texBuff.Get();
 	BarrierDesc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	BarrierDesc.Transition.StateBefore =
 		D3D12_RESOURCE_STATE_COPY_DEST;
@@ -1102,11 +1098,11 @@ bool DirectGraphics::CreateTextureBuffer()
 	m_cmdList->ResourceBarrier(1, &BarrierDesc);
 	m_cmdList->Close();
 
-	ID3D12CommandList* cmdlists[] = { m_cmdList };
+	ID3D12CommandList* cmdlists[] = { m_cmdList.Get() };
 
 	m_cmdQueue->ExecuteCommandLists(1, cmdlists);
 
-	m_cmdQueue->Signal(m_fence, ++m_fenceVal);
+	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
 
 	if (m_fence->GetCompletedValue() != m_fenceVal)
 	{
@@ -1116,7 +1112,7 @@ bool DirectGraphics::CreateTextureBuffer()
 		CloseHandle(event); 
 	}
 	m_cmdAllocator->Reset();//キューをクリア
-	m_cmdList->Reset(m_cmdAllocator, nullptr);
+	m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
 
 	return true;
 }
@@ -1147,7 +1143,7 @@ bool DirectGraphics::CreateDepthBuffer()
 	depthClearValue.DepthStencil.Depth = 1.0f;
 	depthClearValue.Format = DXGI_FORMAT_D32_FLOAT;
 
-	auto result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(&m_depthBuff));
+	auto result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(m_depthBuff.ReleaseAndGetAddressOf()));
 	if (result != S_OK)
 	{
 		return false;
@@ -1167,7 +1163,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 	descHeapDesc.NumDescriptors = 2; // SRVとCBVの二つ
 	descHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;// シェーダーリソースビュー用
 
-	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(&m_pDescHeap));
+	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(m_pDescHeap.ReleaseAndGetAddressOf()));
 
 	if (result != S_OK)
 	{
@@ -1185,7 +1181,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 	auto descHeapHandle = m_pDescHeap->GetCPUDescriptorHandleForHeapStart();
 
 	m_device->CreateShaderResourceView(
-		m_texBuff,	// ビューと関連づけるバッファ
+		m_texBuff.Get(),	// ビューと関連づけるバッファ
 		&srvDesc,	// テクスチャ設定情報
 		descHeapHandle // ヒープのどこに割り当てるか
 	);
@@ -1210,7 +1206,7 @@ bool DirectGraphics::CreateDepthBufferView()
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
 	dsvHeapDesc.NumDescriptors = 1;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_dsvHeap));
+	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(m_dsvHeap.ReleaseAndGetAddressOf()));
 
 	if (result != S_OK)
 	{
@@ -1222,7 +1218,7 @@ bool DirectGraphics::CreateDepthBufferView()
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
 
-	m_device->CreateDepthStencilView(m_depthBuff, &dsvDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
+	m_device->CreateDepthStencilView(m_depthBuff.Get(), &dsvDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
 
 	return true;
 }
@@ -1296,7 +1292,7 @@ bool DirectGraphics::CreateRootSignature()
 		return false;
 	}
 
-	result = m_device->CreateRootSignature(0, rootSigBlob->GetBufferPointer(), rootSigBlob->GetBufferSize(), IID_PPV_ARGS(&m_pRootSignature));
+	result = m_device->CreateRootSignature(0, rootSigBlob->GetBufferPointer(), rootSigBlob->GetBufferSize(), IID_PPV_ARGS(m_pRootSignature.ReleaseAndGetAddressOf()));
 
 	rootSigBlob->Release();
 
@@ -1309,7 +1305,7 @@ bool DirectGraphics::CreateShader()
 
 	// vertexShaderのコンパイル
 	auto result = 
-		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &m_pVsShader, &errorBlob);
+		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, m_pVsShader.ReleaseAndGetAddressOf(), &errorBlob);
 	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 	{
 		::OutputDebugStringA("ファイルが見当たりません");
@@ -1328,7 +1324,7 @@ bool DirectGraphics::CreateShader()
 	
 	// pixelShaderのコンパイル
 	result = 
-		D3DCompileFromFile(L"BasicPixelShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicPS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &m_pPsShader, &errorBlob);
+		D3DCompileFromFile(L"BasicPixelShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "BasicPS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, m_pPsShader.ReleaseAndGetAddressOf(), &errorBlob);
 	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 	{
 		::OutputDebugStringA("ファイルが見当たりません");
@@ -1444,9 +1440,9 @@ bool DirectGraphics::CreateInputLayout()
 	gpipeline.SampleDesc.Count = 1;
 	gpipeline.SampleDesc.Quality = 0;
 
-	gpipeline.pRootSignature = m_pRootSignature;
+	gpipeline.pRootSignature = m_pRootSignature.Get();
 
-	auto result = m_device->CreateGraphicsPipelineState(&gpipeline, IID_PPV_ARGS(&m_pPipelineState));
+	auto result = m_device->CreateGraphicsPipelineState(&gpipeline, IID_PPV_ARGS(m_pPipelineState.ReleaseAndGetAddressOf()));
 
 
 	if (result == S_OK)

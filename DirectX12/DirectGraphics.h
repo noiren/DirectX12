@@ -6,6 +6,7 @@
 #include <DirectXTex.h>
 #include <SpriteFont.h>
 #include <ResourceUploadBatch.h>
+#include "wrl.h"
 #include "DirectInput.h"
 
 #pragma comment(lib,"DirectXTex.lib")
@@ -14,6 +15,7 @@
 #pragma comment(lib,"dxgi.lib")
 
 using namespace DirectX;
+using namespace Microsoft::WRL;
 class DirectGraphics
 {
 public:
@@ -84,34 +86,34 @@ private:
 	void setViewPort();
 
 private:
-	ID3D12Device* m_device;
-	IDXGIFactory6* m_dxgiFactory;
-	IDXGISwapChain4* m_swapChain;
+	ComPtr<ID3D12Device> m_device;
+	ComPtr<IDXGIFactory6> m_dxgiFactory;
+	ComPtr<IDXGISwapChain4> m_swapChain;
 
-	ID3D12CommandAllocator* m_cmdAllocator;
-	ID3D12GraphicsCommandList* m_cmdList;
-	ID3D12CommandQueue* m_cmdQueue;
-	ID3D12DescriptorHeap* m_rtvHeaps;	// レンダーターゲットビュー用のディスクリプタヒープ
+	ComPtr<ID3D12CommandAllocator> m_cmdAllocator;
+	ComPtr<ID3D12GraphicsCommandList> m_cmdList;
+	ComPtr<ID3D12CommandQueue> m_cmdQueue;
+	ComPtr<ID3D12DescriptorHeap> m_rtvHeaps;	// レンダーターゲットビュー用のディスクリプタヒープ
 	std::vector<ID3D12Resource*> m_backBuffers;
-	ID3D12Fence* m_fence;
+	ComPtr<ID3D12Fence> m_fence;
 	UINT64 m_fenceVal;
 
-	ID3DBlob* m_pVsShader;
-	ID3DBlob* m_pPsShader;
+	ComPtr<ID3DBlob> m_pVsShader;
+	ComPtr<ID3DBlob> m_pPsShader;
 
-	ID3D12Resource* m_vertBuff; // 頂点バッファ
+	ComPtr<ID3D12Resource> m_vertBuff; // 頂点バッファ
 	D3D12_VERTEX_BUFFER_VIEW m_vbView;// 頂点バッファビュー
 
-	ID3D12Resource* m_indexBuff; // インデックスバッファ
+	ComPtr<ID3D12Resource> m_indexBuff; // インデックスバッファ
 	D3D12_INDEX_BUFFER_VIEW m_ibView; //　インデックスバッファビュー
 
-	ID3D12Resource* m_texBuff;	//	テクスチャバッファ
-	ID3D12DescriptorHeap* m_pDescHeap;
+	ComPtr<ID3D12Resource> m_texBuff;	//	テクスチャバッファ
+	ComPtr<ID3D12DescriptorHeap> m_pDescHeap;
 
-	ID3D12Resource* m_constBuff; // 定数バッファ
+	ComPtr<ID3D12Resource> m_constBuff; // 定数バッファ
 
-	ID3D12Resource* m_depthBuff; // 深度バッファ
-	ID3D12DescriptorHeap* m_dsvHeap; // ディスクリプタヒープ
+	ComPtr<ID3D12Resource> m_depthBuff; // 深度バッファ
+	ComPtr<ID3D12DescriptorHeap> m_dsvHeap; // ディスクリプタヒープ
 
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
@@ -119,11 +121,11 @@ private:
 
 	MatricesData* m_constMapMatrix; // マップしたマップ行列
 
-	ID3D12Resource* m_pUploadBuff; // アップロードリソース
+	ComPtr<ID3D12Resource> m_pUploadBuff; // アップロードリソース
 
-	ID3D12PipelineState* m_pPipelineState;
+	ComPtr<ID3D12PipelineState> m_pPipelineState;
 
-	ID3D12RootSignature* m_pRootSignature;
+	ComPtr<ID3D12RootSignature> m_pRootSignature;
 
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorrect;
