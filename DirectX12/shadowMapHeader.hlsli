@@ -14,9 +14,3 @@ cbuffer cbuff0 : register(b0) // 0番スロットに設定された定数
 	matrix world; // ワールド変換行列
 	matrix viewproj; // ワールド変換行列
 }
-
-cbuffer cbuff1 : register(b1) // 1番スロットに設定された定数
-{
-	matrix planeWorld; // ワールド変換行列
-	matrix planeViewproj; // ワールド変換行列
-}

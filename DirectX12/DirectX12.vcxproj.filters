@@ -52,6 +52,15 @@
     <None Include="Cube.mtl">
       <Filter>リソース ファイル</Filter>
     </None>
+    <None Include="shadowMapHeader.hlsli">
+      <Filter>リソース ファイル</Filter>
+    </None>
+    <None Include="shadowMapPixel.hlsl">
+      <Filter>リソース ファイル</Filter>
+    </None>
+    <None Include="shadowMapVertex.hlsl">
+      <Filter>リソース ファイル</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="kato.png">

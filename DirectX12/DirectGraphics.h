@@ -61,7 +61,7 @@ public:
 private:
 
 	// 初期化系
-	void LoadObj();
+	void LoadObj(std::string objName, std::vector<VertexObj>& object);
 	bool CreateSpriteBatch();
 	void CreateDirectInput(HWND& hwnd);
 	bool CreateDevice();
@@ -82,6 +82,18 @@ private:
 	bool CreateRootSignature();
 	bool CreateShader();
 	bool CreateInputLayout();
+
+	//----- Pera系初期化
+	void CreatePeraResource();
+	void CreatePeraViewes();
+	void CreatePeraVertex();
+	void CreatePeraIndexLayout();
+
+	bool CreatePlaneVertexBuffer();
+	bool CreatePlaneConstantBuffer();
+	bool CreatePlanePipelineState();
+
+	void RenderShadowMap();
 
 	void setViewPort();
 
@@ -115,11 +127,44 @@ private:
 	ComPtr<ID3D12Resource> m_depthBuff; // 深度バッファ
 	ComPtr<ID3D12DescriptorHeap> m_dsvHeap; // ディスクリプタヒープ
 
+//-------------------------------------------------------------------------
+	ComPtr<ID3D12Resource> m_PlaneVertBuff; // グラウンド用頂点バッファ
+	D3D12_VERTEX_BUFFER_VIEW m_PlaneVbView; // グラウンド用頂点バッファビュー
+
+	ComPtr<ID3D12Resource> m_PlaneIndexBuff; // グラウンド用インデックスバッファ
+	D3D12_INDEX_BUFFER_VIEW m_PlaneIbView;
+
+	ComPtr<ID3DBlob> m_PlaneVertexShader;
+	ComPtr<ID3DBlob> m_PlanePixelShader;
+
+	ComPtr<ID3D12Resource> m_PlaneConstBuff;
+	ComPtr<ID3D12PipelineState> m_peraPipeline;
+
+//-------------------------------------------------------------------------
+	// TODO: よく分からなかった 後で消す
+	ComPtr<ID3D12Resource> m_peraResource; // 書き込み先リソース(テクスチャ用リソース)
+
+	ComPtr<ID3D12DescriptorHeap> m_peraRTVHeap; // レンダーターゲット用ディスクリプタヒープ
+	ComPtr<ID3D12DescriptorHeap> m_peraSRVHeap; // テクスチャ用ディスクリプタヒープ
+
+	ComPtr<ID3D12Resource> m_peraVB; // 頂点バッファ
+	D3D12_VERTEX_BUFFER_VIEW m_peraVBV; // 頂点バッファビュー
+
+	ComPtr<ID3DBlob> m_rsBlob;
+	ComPtr<ID3D12RootSignature> m_peraRS;
+
+//--------------------------------------------------------------------------
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列
 
+	XMMATRIX m_planeWorldMat;
+	XMMATRIX m_planeViewMat;
+	XMMATRIX m_planeProjMat;
+
 	MatricesData* m_constMapMatrix; // マップしたマップ行列
+
+	MatricesData* m_constPlaneMapMatrix; // マップしたグラウンド行列
 
 	ComPtr<ID3D12Resource> m_pUploadBuff; // アップロードリソース
 
@@ -131,12 +176,17 @@ private:
 	D3D12_RECT m_scissorrect;
 
 	DirectX::TexMetadata m_metadata;
-	std::vector<VertexObj> m_vertex;
+
+	std::vector<VertexObj> m_vertex; // キューブ用
+	std::vector<VertexObj> m_plane; // グラウンド用
 
 	float m_angleX;
 	float m_angleY;
 	XMFLOAT3 m_pos;
 	float m_size;
+
+	float m_planeSize;
+	XMFLOAT3 m_planePos;
 
 	XMFLOAT3 m_eye;
 	XMFLOAT3 m_target;

@@ -177,6 +177,9 @@
     <None Include="BasicShaderHeader.hlsli" />
     <None Include="Cube.mtl" />
     <None Include="packages.config" />
+    <None Include="shadowMapHeader.hlsli" />
+    <None Include="shadowMapPixel.hlsl" />
+    <None Include="shadowMapVertex.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="kato.png" />
