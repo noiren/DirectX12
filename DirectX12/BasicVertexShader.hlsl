@@ -19,3 +19,12 @@ Output PlaneVS(float4 pos : POSITION, float4 normal : NORMAL, float2 uv : TEXCOO
 	output.uv = uv;
 	return output;
 }
+
+Output shadowVS(float4 pos : POSITION, float4 normal : NORMAL, float2 uv : TEXCOORD)
+{
+	Output output;
+	output.svpos = mul(mul(viewproj, world), pos);
+	output.svpos = mul(lightCamera, pos);
+
+	return output;
+}

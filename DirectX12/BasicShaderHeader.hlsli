@@ -8,12 +8,14 @@ struct Output {
 
 Texture2D<float4> tex : register(t0); // 0番スロットに設定されたテクスチャ
 Texture2D<float> depthTex : register(t1); // 深度テクスチャ
+Texture2D<float> lightDepthTex : register(t2); // ライト深度テクスチャ
 SamplerState smp : register(s0);		  // 0番スロットに設定されたサンプラー
 
 cbuffer cbuff0 : register(b0) // 0番スロットに設定された定数
 {
 	matrix world; // ワールド変換行列
 	matrix viewproj; // ワールド変換行列
+	matrix lightCamera; // ライトビュープロジェクション
 }
 
 cbuffer cbuff1 : register(b1) // 1番スロットに設定された定数

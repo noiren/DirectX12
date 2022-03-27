@@ -52,6 +52,7 @@ public:
 	struct MatricesData {
 		XMMATRIX world;
 		XMMATRIX viewproj;
+		XMMATRIX lightCamera; // カメラから見たビュー
 	};
 
 	struct TexRGBA {
@@ -87,6 +88,9 @@ private:
 	bool CreatePlaneVertexBuffer();
 	bool CreatePlaneConstantBuffer();
 	bool CreatePlanePipelineState();
+
+	bool CreateShadowPipelineState();
+
 
 	// 深度値をテクスチャに変換する工程
 	//bool CreateDepthSRVHeapAndView();
@@ -138,6 +142,13 @@ private:
 
 	ComPtr<ID3D12DescriptorHeap> m_PlaneDepthSRVHeap; // 深度テクスチャ用のヒープ
 
+//-------------------------------------------------------------------------
+
+	// シャドウマップ用深度バッファ
+	ComPtr<ID3D12Resource> m_lightDepthBuffer;
+
+	ComPtr<ID3D12PipelineState> m_shadowPipeline;
+
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列
@@ -174,6 +185,7 @@ private:
 
 	XMFLOAT3 m_eye;
 	XMFLOAT3 m_target;
+	XMFLOAT3 m_up;
 
 	Input* m_directInput;
 

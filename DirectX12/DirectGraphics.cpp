@@ -17,6 +17,8 @@ using namespace DirectX;
 namespace {
 	const float WINDOW_WIDTH = 1280.f;
 	const float WINDOW_HEIGHT = 720.f;
+
+	constexpr uint32_t shadow_difinition = 1024;
 }
 
 template <typename T> std::wstring toWstr(T tep)
@@ -209,6 +211,11 @@ bool DirectGraphics::Init(HWND& hwnd)
 	{
 		return false;
 	}
+	
+	if (CreateShadowPipelineState() == false)
+	{
+		return false;
+	}
 
 	setViewPort();
 
@@ -266,6 +273,29 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->ResourceBarrier(1, &BarrierDesc);
 
+	m_cmdList->SetPipelineState(m_shadowPipeline.Get());
+
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
+
+	m_cmdList->SetDescriptorHeaps(1, m_pDescHeap.GetAddressOf()); // ディスクリプタヒープの設定
+
+	auto heapHandle = m_pDescHeap->GetGPUDescriptorHandleForHeapStart();
+
+	m_cmdList->SetGraphicsRootDescriptorTable(
+		0,
+		heapHandle
+	);
+
+	auto handle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
+	handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+	m_cmdList->OMSetRenderTargets(0, nullptr, false, &handle);
+
+	m_cmdList->ClearDepthStencilView(handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+	// ライト深度テクスチャ
+	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
+
 	m_cmdList->SetPipelineState(m_pPipelineState.Get()); // パイプラインステートの設定
 
 	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
@@ -286,23 +316,11 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
 
-	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
-
 	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
 
 	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
 
 	m_cmdList->IASetIndexBuffer(&m_ibView);
-
-	// 通常テクスチャ・定数バッファ*2の設定
-	m_cmdList->SetDescriptorHeaps(1, m_pDescHeap.GetAddressOf()); // ディスクリプタヒープの設定
-
-	auto heapHandle = m_pDescHeap->GetGPUDescriptorHandleForHeapStart();
-
-	m_cmdList->SetGraphicsRootDescriptorTable(
-		0,
-		heapHandle
-	);
 
 	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
 
@@ -424,8 +442,17 @@ void DirectGraphics::SetRotate()
 
 	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
 
+	auto eyePos = XMLoadFloat3(&m_eye);
+	auto targetPos = XMLoadFloat3(&m_target);
+	auto upVec = XMLoadFloat3(&m_up);
+	auto light = XMFLOAT4(-1, 1, -1, 0);
+	XMVECTOR lightVec = XMLoadFloat4(&light);
+
+	auto lightPos = targetPos + XMVector3Normalize(lightVec) * XMVector3Length(XMVectorSubtract(targetPos, eyePos)).m128_f32[0];
+
 	m_constMapMatrix->world = m_worldMat;
 	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
+	m_constMapMatrix->lightCamera = XMMatrixLookAtLH(lightPos, targetPos, upVec) * XMMatrixOrthographicLH(40, 40, 1.0f, 100.f);
 
 	m_planeWorldMat = XMMatrixScaling(3.5f, 3.5f, 3.5f) * XMMatrixRotationX(45 * (XM_PI / 180)) * XMMatrixRotationY(135 * (XM_PI / 180)) * XMMatrixTranslation(0.f, -3.15f, 0.f);
 	m_constPlaneMapMatrix->world = m_planeWorldMat;
@@ -1015,10 +1042,10 @@ bool DirectGraphics::CreateConstantBuffer()
 
 	m_target = XMFLOAT3(0, 0, 0);
 
-	XMFLOAT3 up(0, 1, 0);		// 上ベクトル
+	m_up = XMFLOAT3(0, 1, 0);		// 上ベクトル
 
 	// ビュー行列
-	m_viewMat = XMMatrixLookAtLH(XMLoadFloat3(&m_eye), XMLoadFloat3(&m_target), XMLoadFloat3(&up));
+	m_viewMat = XMMatrixLookAtLH(XMLoadFloat3(&m_eye), XMLoadFloat3(&m_target), XMLoadFloat3(&m_up));
 	//matrix *= m_viewMat;
 
 	// プロジェクション行列
@@ -1295,6 +1322,11 @@ bool DirectGraphics::CreateDepthBuffer()
 		return false;
 	}
 
+	depthResDesc.Width = shadow_difinition;
+	depthResDesc.Height = shadow_difinition;
+
+	result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(m_lightDepthBuffer.ReleaseAndGetAddressOf()));
+
 	return true;
 }
 
@@ -1306,7 +1338,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 
 	descHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	descHeapDesc.NodeMask = 0;
-	descHeapDesc.NumDescriptors = 4; // SRVとCBV,CBVの二つ
+	descHeapDesc.NumDescriptors = 5;
 	descHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;// シェーダーリソースビュー用
 
 	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(m_pDescHeap.ReleaseAndGetAddressOf()));
@@ -1364,11 +1396,18 @@ bool DirectGraphics::CreateShaderConstResourceView()
 	resDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	resDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 
+	// カメラ深度値
 	descHeapHandle.ptr +=
 		m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 
 	m_device->CreateShaderResourceView(m_depthBuff.Get(), &resDesc, descHeapHandle);
+
+	// ライト深度値
+	descHeapHandle.ptr += 
+		m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	m_device->CreateShaderResourceView(m_lightDepthBuffer.Get(), &resDesc, descHeapHandle);
 
 	return true;
 }
@@ -1376,7 +1415,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 bool DirectGraphics::CreateDepthBufferView()
 {
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-	dsvHeapDesc.NumDescriptors = 1;
+	dsvHeapDesc.NumDescriptors = 2;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(m_dsvHeap.ReleaseAndGetAddressOf()));
 
@@ -1390,9 +1429,16 @@ bool DirectGraphics::CreateDepthBufferView()
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
 
+	// 通常デプス
 	m_device->CreateDepthStencilView(m_depthBuff.Get(), &dsvDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
 
-	// シャドウマップ用のDepthStencilViewを作っていない？
+	// ライトデプス
+
+	auto handle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+	m_device->CreateDepthStencilView(m_lightDepthBuffer.Get(), &dsvDesc, handle);
 
 	return true;
 }
@@ -1400,7 +1446,7 @@ bool DirectGraphics::CreateDepthBufferView()
 bool DirectGraphics::CreateRootSignature()
 {
 	// ディスクリプタレンジの作成
-	D3D12_DESCRIPTOR_RANGE descTblRange[4] = {};
+	D3D12_DESCRIPTOR_RANGE descTblRange[5] = {};
 
 	// テクスチャ用レジスター0番
 	descTblRange[0].NumDescriptors = 1; // 今回使用するテクスチャは1つ
@@ -1430,6 +1476,14 @@ bool DirectGraphics::CreateRootSignature()
 	descTblRange[3].OffsetInDescriptorsFromTableStart =
 		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	// テクスチャ用レジスター2番
+	descTblRange[4].NumDescriptors = 1;
+	descTblRange[4].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	descTblRange[4].BaseShaderRegister = 2; // t2
+	descTblRange[4].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+
 	// ルートパラメーター作成
 	D3D12_ROOT_PARAMETER rootparam = {};
 
@@ -1438,7 +1492,7 @@ bool DirectGraphics::CreateRootSignature()
 	// 配列先頭アドレスを指定
 	rootparam.DescriptorTable.pDescriptorRanges = &descTblRange[0];
 
-	rootparam.DescriptorTable.NumDescriptorRanges = 4;
+	rootparam.DescriptorTable.NumDescriptorRanges = 5;
 
 	rootparam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
@@ -1796,6 +1850,131 @@ bool DirectGraphics::CreatePlanePipelineState()
 	{
 		return false;
 	}
+}
+
+bool DirectGraphics::CreateShadowPipelineState()
+{
+	// 影用のパイプラインステートを作る
+
+
+	// シェーダーから
+	ID3DBlob* vsBlob = nullptr;
+	ID3DBlob* errorBlob = nullptr;
+
+	auto result =
+		D3DCompileFromFile(L"BasicVertexShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "shadowVS", "vs_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vsBlob, &errorBlob);
+	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+	{
+		::OutputDebugStringA("ファイルが見当たりません");
+		return 0;
+	}
+	else if (result != S_OK)
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+	}
+
+	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
+	{
+		// 頂点情報
+		{
+			"POSITION",									// セマンティクス
+			0,
+			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
+			0,											// 入力スロットインデックス
+			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
+		// 法線情報
+		{
+			"NORMAL",									// セマンティクス
+			0,
+			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
+			0,											// 入力スロットインデックス
+			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
+			0
+		},
+		// UV情報
+		{
+			"TEXCOORD",
+			0,
+			DXGI_FORMAT_R32G32_FLOAT,					// 情報はXMFLOAT2なので二つぶん
+			0,
+			D3D12_APPEND_ALIGNED_ELEMENT,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+	};
+
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC plsDesc = {};
+
+	plsDesc.VS = CD3DX12_SHADER_BYTECODE(vsBlob);
+	plsDesc.PS.BytecodeLength = 0;
+	plsDesc.PS.pShaderBytecode = nullptr;
+	plsDesc.NumRenderTargets = 0;
+	plsDesc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+
+	// サンプルマスク・ラスタライザーの設定
+	plsDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
+
+	plsDesc.RasterizerState.MultisampleEnable = false;
+	plsDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // カリングしない
+	plsDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; // 中身の塗りつぶし
+	plsDesc.RasterizerState.DepthClipEnable = true; // 深度方向のクリッピングは有効に
+	//残り
+	plsDesc.RasterizerState.FrontCounterClockwise = false;
+	plsDesc.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+	plsDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+	plsDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+	plsDesc.RasterizerState.AntialiasedLineEnable = false;
+	plsDesc.RasterizerState.ForcedSampleCount = 0;
+	plsDesc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+	plsDesc.DepthStencilState.DepthEnable = true;
+	plsDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	plsDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+
+	plsDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+
+
+	// ブレンドステートの設定
+	plsDesc.BlendState.AlphaToCoverageEnable = false;
+	plsDesc.BlendState.IndependentBlendEnable = false;
+
+	D3D12_RENDER_TARGET_BLEND_DESC renderTargetBlendDesc = {};
+	renderTargetBlendDesc.BlendEnable = false;
+	renderTargetBlendDesc.LogicOpEnable = false;
+	renderTargetBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	plsDesc.BlendState.RenderTarget[0] = renderTargetBlendDesc;
+
+	// 入力レイアウトの設定
+	plsDesc.InputLayout.pInputElementDescs = inputLayout;
+	plsDesc.InputLayout.NumElements = _countof(inputLayout);
+
+	plsDesc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+
+	plsDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+
+	plsDesc.NumRenderTargets = 1;
+	plsDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+
+	plsDesc.SampleDesc.Count = 1;
+	plsDesc.SampleDesc.Quality = 0;
+
+	plsDesc.pRootSignature = m_pRootSignature.Get();
+
+	result = m_device->CreateGraphicsPipelineState(&plsDesc, IID_PPV_ARGS(m_shadowPipeline.ReleaseAndGetAddressOf()));
+
+	return true;
 }
 
 void DirectGraphics::setViewPort()
