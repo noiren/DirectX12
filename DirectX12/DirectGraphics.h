@@ -83,17 +83,13 @@ private:
 	bool CreateShader();
 	bool CreateInputLayout();
 
-	//----- Pera系初期化
-	void CreatePeraResource();
-	void CreatePeraViewes();
-	void CreatePeraVertex();
-	void CreatePeraIndexLayout();
-
+	//----- Plane系初期化
 	bool CreatePlaneVertexBuffer();
 	bool CreatePlaneConstantBuffer();
 	bool CreatePlanePipelineState();
 
-	void RenderShadowMap();
+	// 深度値をテクスチャに変換する工程
+	//bool CreateDepthSRVHeapAndView();
 
 	void setViewPort();
 
@@ -140,20 +136,8 @@ private:
 	ComPtr<ID3D12Resource> m_PlaneConstBuff;
 	ComPtr<ID3D12PipelineState> m_peraPipeline;
 
-//-------------------------------------------------------------------------
-	// TODO: よく分からなかった 後で消す
-	ComPtr<ID3D12Resource> m_peraResource; // 書き込み先リソース(テクスチャ用リソース)
+	ComPtr<ID3D12DescriptorHeap> m_PlaneDepthSRVHeap; // 深度テクスチャ用のヒープ
 
-	ComPtr<ID3D12DescriptorHeap> m_peraRTVHeap; // レンダーターゲット用ディスクリプタヒープ
-	ComPtr<ID3D12DescriptorHeap> m_peraSRVHeap; // テクスチャ用ディスクリプタヒープ
-
-	ComPtr<ID3D12Resource> m_peraVB; // 頂点バッファ
-	D3D12_VERTEX_BUFFER_VIEW m_peraVBV; // 頂点バッファビュー
-
-	ComPtr<ID3DBlob> m_rsBlob;
-	ComPtr<ID3D12RootSignature> m_peraRS;
-
-//--------------------------------------------------------------------------
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列

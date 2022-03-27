@@ -8,6 +8,14 @@ float4 BasicPS(Output input) : SV_TARGET
 	return float4(mul(brightness, textureColor.x), mul(brightness, textureColor.y), mul(brightness, textureColor.z), 0.f);
 }
 
+float4 PlanePS(Output input) : SV_TARGET
+{
+	// ÇøÇÂÇ¡Ç∆îZÇ¢ÇﬂÇ…ÇµÇƒèoóÕ
+	float dep = pow(depthTex.Sample(smp,input.uv),20);
+	return float4(dep, dep, dep, 1);
+}
+
+
 
 //float3 lightPower = float3(0.f, 0.f, 10.0f);
 //float3 lightDir = normalize(float3(1, 1, 1));

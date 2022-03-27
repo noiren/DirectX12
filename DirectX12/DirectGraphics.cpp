@@ -210,15 +210,6 @@ bool DirectGraphics::Init(HWND& hwnd)
 		return false;
 	}
 
-	/*
-	CreatePeraResource();
-
-	CreatePeraViewes();
-
-	CreatePeraVertex();
-
-	CreatePeraIndexLayout();
-	*/
 	setViewPort();
 
 	CreateSpriteBatch();
@@ -247,10 +238,200 @@ void DirectGraphics::Render()
 	}
 	SetRotate();
 	
-	//RenderShadowMap();
 	m_swapChain->Present(0, 0);
 	//m_gmemory->Commit(m_cmdQueue);
 }
+
+bool DirectGraphics::SetupSwapChain()
+{
+	// バックバッファに描画結果を書き込む
+
+	auto bbIdx = m_swapChain->GetCurrentBackBufferIndex(); // 0か1が帰ってくる
+
+	if (bbIdx > 2)
+	{
+		return false;
+	}
+
+	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; // 遷移
+	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;	   // 特に指定なし
+	BarrierDesc.Transition.pResource = m_backBuffers[bbIdx];   // バックバッファーリソース
+	BarrierDesc.Transition.Subresource = 0;
+
+	BarrierDesc.Transition.StateBefore
+		= D3D12_RESOURCE_STATE_PRESENT;			// 直前はPRESENT状態
+
+	BarrierDesc.Transition.StateAfter
+		= D3D12_RESOURCE_STATE_RENDER_TARGET;	// 今からレンダーターゲット状態
+
+	m_cmdList->ResourceBarrier(1, &BarrierDesc);
+
+	m_cmdList->SetPipelineState(m_pPipelineState.Get()); // パイプラインステートの設定
+
+	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
+
+	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	auto dsvH = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	m_cmdList->OMSetRenderTargets(1, &rtvH, true, &dsvH);
+
+	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
+
+	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
+
+	m_cmdList->ClearDepthStencilView(dsvH, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+	m_cmdList->RSSetViewports(1, &m_viewport);
+
+	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
+
+	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
+
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
+
+	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
+
+	m_cmdList->IASetIndexBuffer(&m_ibView);
+
+	// 通常テクスチャ・定数バッファ*2の設定
+	m_cmdList->SetDescriptorHeaps(1, m_pDescHeap.GetAddressOf()); // ディスクリプタヒープの設定
+
+	auto heapHandle = m_pDescHeap->GetGPUDescriptorHandleForHeapStart();
+
+	m_cmdList->SetGraphicsRootDescriptorTable(
+		0,
+		heapHandle
+	);
+
+	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
+
+	m_cmdList->SetPipelineState(m_peraPipeline.Get()); // パイプラインステートの設定
+
+	m_cmdList->IASetVertexBuffers(0, 1, &m_PlaneVbView);// 頂点バッファビューの設定
+
+	m_cmdList->IASetIndexBuffer(&m_PlaneIbView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけ)
+
+	m_cmdList->DrawIndexedInstanced(planeIndexSize, 1, 0, 0, 0);
+
+	RenderText();
+
+	// コマンドリストの実行
+
+	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+	m_cmdList->ResourceBarrier(1, &BarrierDesc);
+
+	m_cmdList->Close(); // 実行前には必ずクローズすること！
+
+	ID3D12CommandList* cmdLists[] = { m_cmdList.Get() };
+	m_cmdQueue->ExecuteCommandLists(1, cmdLists);
+
+	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
+
+	if (m_fence->GetCompletedValue() != m_fenceVal)
+	{
+		auto event = CreateEvent(nullptr, false, false, nullptr);
+
+		m_fence->SetEventOnCompletion(m_fenceVal, event);
+
+		WaitForSingleObject(event, INFINITE);
+
+		CloseHandle(event);
+	}
+
+	m_cmdAllocator->Reset();
+	m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
+
+	return true;
+}
+
+void DirectGraphics::RenderText()
+{
+	std::wstring modelXYZ = L"modelPos :(" + toWstr(m_pos.x * 64.f) + L"," + toWstr(m_pos.y * 60.f) + L", 0)";
+	std::wstring cameraEye = L"cameraEyePos :(" + toWstr(m_eye.x) + L"," + toWstr(m_eye.y) + L"," + toWstr(m_eye.z) + L")";
+	std::wstring cameraTarget = L"cameraTargetPos :(" + toWstr(m_target.x) + L"," + toWstr(m_target.y) + L"," + toWstr(m_target.z) + L")";
+
+	m_cmdList->SetDescriptorHeaps(1, m_heapForSpriteFont.GetAddressOf());
+	m_spritebatch->Begin(m_cmdList.Get());
+	m_spritefont->DrawString(m_spritebatch, modelXYZ.c_str(), DirectX::XMFLOAT2(0, 0), DirectX::Colors::Black);
+	m_spritefont->DrawString(m_spritebatch, cameraEye.c_str(), DirectX::XMFLOAT2(0, 70), DirectX::Colors::Black);
+	m_spritefont->DrawString(m_spritebatch, cameraTarget.c_str(), DirectX::XMFLOAT2(0, 140), DirectX::Colors::Black);
+	m_spritebatch->End();
+
+}
+
+void DirectGraphics::SetRotate()
+{
+	// X軸方向回転
+	if (m_directInput->CheckKey(static_cast<UINT>(DIK_8)))
+	{
+		m_angleX += 0.1f;
+	}
+	if (m_directInput->CheckKey(DIK_2))
+	{
+		m_angleX -= 0.1f;
+	}
+
+	// Y軸方向回転
+	if (m_directInput->CheckKey(DIK_4))
+	{
+		m_angleY += 0.1f;
+	}
+	if (m_directInput->CheckKey(DIK_6))
+	{
+		m_angleY -= 0.1f;
+	}
+
+
+	// X軸平行移動
+	if (m_directInput->CheckKey(DIK_LEFT))
+	{
+		m_pos.x -= 0.01f;
+	}
+	if (m_directInput->CheckKey(DIK_RIGHT))
+	{
+		m_pos.x += 0.01f;
+	}
+
+	// Y軸平行移動
+	if (m_directInput->CheckKey(DIK_UP))
+	{
+		m_pos.y += 0.01f;
+	}
+	if (m_directInput->CheckKey(DIK_DOWN))
+	{
+		m_pos.y -= 0.01f;
+	}
+
+	if (m_directInput->CheckKey(DIK_D))
+	{
+		m_size -= 0.01f;
+	}
+	if (m_directInput->CheckKey(DIK_F))
+	{
+		m_size += 0.01f;
+	}
+
+	if (m_directInput->CheckKey(DIK_J))
+	{
+		m_planeSize -= 0.01f;
+	}
+	if (m_directInput->CheckKey(DIK_K))
+	{
+		m_planeSize += 0.01f;
+	}
+
+	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+
+	m_constMapMatrix->world = m_worldMat;
+	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
+
+	m_planeWorldMat = XMMatrixScaling(3.5f, 3.5f, 3.5f) * XMMatrixRotationX(45 * (XM_PI / 180)) * XMMatrixRotationY(135 * (XM_PI / 180)) * XMMatrixTranslation(0.f, -3.15f, 0.f);
+	m_constPlaneMapMatrix->world = m_planeWorldMat;
+	m_constPlaneMapMatrix->viewproj = m_planeViewMat * m_planeProjMat;
+}
+
 
 
 void DirectGraphics::LoadObj(std::string objName, std::vector<VertexObj>& object)
@@ -624,194 +805,6 @@ bool DirectGraphics::ResetCommandAllocator()
 	}
 }
 
-bool DirectGraphics::SetupSwapChain()
-{
-	auto bbIdx = m_swapChain->GetCurrentBackBufferIndex(); // 0か1が帰ってくる
-
-	if (bbIdx > 2)
-	{
-		return false;
-	}
-	
-	BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; // 遷移
-	BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;	   // 特に指定なし
-	BarrierDesc.Transition.pResource = m_backBuffers[bbIdx];   // バックバッファーリソース
-	BarrierDesc.Transition.Subresource = 0;
-
-	BarrierDesc.Transition.StateBefore
-		= D3D12_RESOURCE_STATE_PRESENT;			// 直前はPRESENT状態
-
-	BarrierDesc.Transition.StateAfter
-		= D3D12_RESOURCE_STATE_RENDER_TARGET;	// 今からレンダーターゲット状態
-
-	m_cmdList->ResourceBarrier(1, &BarrierDesc);
-	
-	m_cmdList->SetPipelineState(m_pPipelineState.Get()); // パイプラインステートの設定
-
-	auto rtvH = m_rtvHeaps->GetCPUDescriptorHandleForHeapStart();
-
-	rtvH.ptr += bbIdx * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-	auto dsvH = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
-
-	m_cmdList->OMSetRenderTargets(1, &rtvH, true, &dsvH);
-
-	float clearColor[] = { 1.0f,1.0f,0.0f,1.0f }; // 黄色
-
-	m_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr); // 画面クリア
-
-	m_cmdList->ClearDepthStencilView(dsvH, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
-	m_cmdList->RSSetViewports(1, &m_viewport);
-
-	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
-
-	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
-
-	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
-
-	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
-
-	m_cmdList->IASetIndexBuffer(&m_ibView);	
-	
-	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get());
-
-	m_cmdList->SetDescriptorHeaps(1, m_pDescHeap.GetAddressOf()); // ディスクリプタヒープの設定
-
-	auto heapHandle = m_pDescHeap->GetGPUDescriptorHandleForHeapStart();
-
-	m_cmdList->SetGraphicsRootDescriptorTable(
-		0,
-		heapHandle
-	);
-	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
-
-	
-	m_cmdList->SetPipelineState(m_peraPipeline.Get()); // パイプラインステートの設定
-
-	m_cmdList->IASetVertexBuffers(0, 1, &m_PlaneVbView);// 頂点バッファビューの設定
-
-	m_cmdList->IASetIndexBuffer(&m_PlaneIbView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけ)
-
-	m_cmdList->DrawIndexedInstanced(planeIndexSize, 1, 0, 0, 0);
-	
-	RenderText();
-
-	// コマンドリストの実行
-
-	BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-	m_cmdList->ResourceBarrier(1, &BarrierDesc);
-
-	m_cmdList->Close(); // 実行前には必ずクローズすること！
-
-	ID3D12CommandList* cmdLists[] = { m_cmdList.Get() };
-	m_cmdQueue->ExecuteCommandLists(1, cmdLists);
-
-	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
-
-	if (m_fence->GetCompletedValue() != m_fenceVal)
-	{
-		auto event = CreateEvent(nullptr, false, false, nullptr);
-
-		m_fence->SetEventOnCompletion(m_fenceVal, event);
-
-		WaitForSingleObject(event, INFINITE);
-
-		CloseHandle(event);
-	}
-
-	m_cmdAllocator->Reset();
-	m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
-
-	return true;
-}
-
-void DirectGraphics::RenderText()
-{
-	std::wstring modelXYZ = L"modelPos :(" + toWstr(m_pos.x * 64.f) + L"," + toWstr(m_pos.y * 60.f) + L", 0)";
-	std::wstring cameraEye = L"cameraEyePos :(" + toWstr(m_eye.x) + L"," + toWstr(m_eye.y) + L"," + toWstr(m_eye.z) + L")";
-	std::wstring cameraTarget = L"cameraTargetPos :(" + toWstr(m_target.x) + L"," + toWstr(m_target.y) + L"," + toWstr(m_target.z) + L")";
-
-	m_cmdList->SetDescriptorHeaps(1, m_heapForSpriteFont.GetAddressOf());
-	m_spritebatch->Begin(m_cmdList.Get());
-	m_spritefont->DrawString(m_spritebatch, modelXYZ.c_str(), DirectX::XMFLOAT2(0, 0), DirectX::Colors::Black);
-	m_spritefont->DrawString(m_spritebatch, cameraEye.c_str(), DirectX::XMFLOAT2(0, 70), DirectX::Colors::Black);
-	m_spritefont->DrawString(m_spritebatch, cameraTarget.c_str(), DirectX::XMFLOAT2(0, 140), DirectX::Colors::Black);
-	m_spritebatch->End();
-
-}
-
-void DirectGraphics::SetRotate()
-{
-	// X軸方向回転
-	if (m_directInput->CheckKey(static_cast<UINT>(DIK_8)))
-	{
-		m_angleX += 0.1f;
-	}
-	if (m_directInput->CheckKey(DIK_2))
-	{
-		m_angleX -= 0.1f;
-	}
-	
-	// Y軸方向回転
-	if (m_directInput->CheckKey(DIK_4))
-	{
-		m_angleY += 0.1f;
-	}
-	if (m_directInput->CheckKey(DIK_6))
-	{
-		m_angleY -= 0.1f;
-	}
-
-
-	// X軸平行移動
-	if (m_directInput->CheckKey(DIK_LEFT))
-	{
-		m_pos.x -= 0.01f;
-	}
-	if (m_directInput->CheckKey(DIK_RIGHT))
-	{
-		m_pos.x += 0.01f;
-	}
-
-	// Y軸平行移動
-	if (m_directInput->CheckKey(DIK_UP))
-	{
-		m_pos.y += 0.01f;
-	}
-	if (m_directInput->CheckKey(DIK_DOWN))
-	{
-		m_pos.y -= 0.01f;
-	}
-
-	if (m_directInput->CheckKey(DIK_D))
-	{
-		m_size -= 0.01f;
-	}
-	if (m_directInput->CheckKey(DIK_F))
-	{
-		m_size += 0.01f;
-	}
-
-	if (m_directInput->CheckKey(DIK_J))
-	{
-		m_planeSize -= 0.01f;
-	}
-	if (m_directInput->CheckKey(DIK_K))
-	{
-		m_planeSize += 0.01f;
-	}
-
-	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
-
-	m_constMapMatrix->world = m_worldMat;
-	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
-	
-	m_planeWorldMat = XMMatrixScaling(3.5f, 3.5f, 3.5f) * XMMatrixRotationX(45 * (XM_PI / 180)) * XMMatrixRotationY(135 * (XM_PI / 180)) * XMMatrixTranslation(0.f, -3.15f, 0.f);
-	m_constPlaneMapMatrix->world = m_planeWorldMat;
-	m_constPlaneMapMatrix->viewproj = m_planeViewMat * m_planeProjMat;
-}
 
 void DirectGraphics::EnableDebugLayer()
 {
@@ -1136,50 +1129,6 @@ bool DirectGraphics::CreateTextureBuffer()
 
 	auto img = scratchImg.GetImage(0, 0, 0);
 
-#if 0 // 従来の方法
-	// ヒープの設定
-	D3D12_HEAP_PROPERTIES heapprop = {};
-
-	heapprop.Type = D3D12_HEAP_TYPE_CUSTOM;
-
-	//　ライトバック
-	heapprop.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
-
-	//	転送はL0、つまりCPU側から直接
-	heapprop.MemoryPoolPreference = D3D12_MEMORY_POOL_L0;
-
-	heapprop.CreationNodeMask = 0;
-	heapprop.VisibleNodeMask = 0;
-
-	D3D12_RESOURCE_DESC resDesc = {};
-
-	resDesc.Format = m_metadata.format;
-	resDesc.Width = m_metadata.width;
-	resDesc.Height = m_metadata.height;
-	resDesc.DepthOrArraySize = m_metadata.arraySize;
-	resDesc.SampleDesc.Count = 1;
-	resDesc.SampleDesc.Quality = 0;
-	resDesc.MipLevels = m_metadata.mipLevels;
-	resDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(m_metadata.dimension);
-	resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-	resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-	result = m_device->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_texBuff));
-
-	if (result != S_OK)
-	{
-		return false;
-	}
-
-	// テクスチャバッファの転送
-	result = m_texBuff->WriteToSubresource(0, nullptr, img->pixels, img->rowPitch, img->slicePitch);
-
-	if (result != S_OK)
-	{
-		return false;
-	}
-#endif
-
 	{
 		// 中間バッファとしてのアップロードヒープ設定
 		D3D12_HEAP_PROPERTIES uploadHeapProp = {};
@@ -1322,7 +1271,7 @@ bool DirectGraphics::CreateDepthBuffer()
 	depthResDesc.Width = WINDOW_WIDTH;
 	depthResDesc.Height = WINDOW_HEIGHT;
 	depthResDesc.DepthOrArraySize = 1;
-	depthResDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	depthResDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 	depthResDesc.SampleDesc.Count = 1;
 	depthResDesc.Flags =
 		D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
@@ -1357,7 +1306,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 
 	descHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	descHeapDesc.NodeMask = 0;
-	descHeapDesc.NumDescriptors = 3; // SRVとCBV,CBVの二つ
+	descHeapDesc.NumDescriptors = 4; // SRVとCBV,CBVの二つ
 	descHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;// シェーダーリソースビュー用
 
 	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(m_pDescHeap.ReleaseAndGetAddressOf()));
@@ -1408,6 +1357,19 @@ bool DirectGraphics::CreateShaderConstResourceView()
 
 	m_device->CreateConstantBufferView(&cbvPlaneDesc, descHeapHandle);
 
+	// シャドウマップ用
+	D3D12_SHADER_RESOURCE_VIEW_DESC resDesc = {};
+	resDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	resDesc.Texture2D.MipLevels = 1;
+	resDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	resDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+
+	descHeapHandle.ptr +=
+		m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+
+	m_device->CreateShaderResourceView(m_depthBuff.Get(), &resDesc, descHeapHandle);
+
 	return true;
 }
 
@@ -1430,35 +1392,43 @@ bool DirectGraphics::CreateDepthBufferView()
 
 	m_device->CreateDepthStencilView(m_depthBuff.Get(), &dsvDesc, m_dsvHeap->GetCPUDescriptorHandleForHeapStart());
 
+	// シャドウマップ用のDepthStencilViewを作っていない？
+
 	return true;
 }
 
 bool DirectGraphics::CreateRootSignature()
 {
 	// ディスクリプタレンジの作成
-	D3D12_DESCRIPTOR_RANGE descTblRange[3] = {};
+	D3D12_DESCRIPTOR_RANGE descTblRange[4] = {};
 
 	// テクスチャ用レジスター0番
 	descTblRange[0].NumDescriptors = 1; // 今回使用するテクスチャは1つ
 	descTblRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; // 種別はテクスチャ
-	descTblRange[0].BaseShaderRegister = 0; // 0番スロットからスタート
+	descTblRange[0].BaseShaderRegister = 0; // t0
 	descTblRange[0].OffsetInDescriptorsFromTableStart =
 		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	// 定数用レジスター0番
 	descTblRange[1].NumDescriptors = 1;
 	descTblRange[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-	descTblRange[1].BaseShaderRegister = 0;
+	descTblRange[1].BaseShaderRegister = 0; // b0
 	descTblRange[1].OffsetInDescriptorsFromTableStart =
 		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	// 定数用レジスター1番
 	descTblRange[2].NumDescriptors = 1;
 	descTblRange[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-	descTblRange[2].BaseShaderRegister = 1;
+	descTblRange[2].BaseShaderRegister = 1; // b1
 	descTblRange[2].OffsetInDescriptorsFromTableStart =
 		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	// テクスチャ用レジスター1番
+	descTblRange[3].NumDescriptors = 1;
+	descTblRange[3].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	descTblRange[3].BaseShaderRegister = 1; // t1
+	descTblRange[3].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	// ルートパラメーター作成
 	D3D12_ROOT_PARAMETER rootparam = {};
@@ -1468,7 +1438,7 @@ bool DirectGraphics::CreateRootSignature()
 	// 配列先頭アドレスを指定
 	rootparam.DescriptorTable.pDescriptorRanges = &descTblRange[0];
 
-	rootparam.DescriptorTable.NumDescriptorRanges = 3;
+	rootparam.DescriptorTable.NumDescriptorRanges = 4;
 
 	rootparam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
@@ -1698,6 +1668,27 @@ bool DirectGraphics::CreatePlanePipelineState()
 		return false;
 	}
 
+	// pixelShaderのコンパイル
+	result =
+		D3DCompileFromFile(L"BasicPixelShader.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PlanePS", "ps_5_0", D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, m_PlanePixelShader.ReleaseAndGetAddressOf(), &errorBlob);
+	if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+	{
+		::OutputDebugStringA("ファイルが見当たりません");
+		return 0;
+	}
+	else if (result != S_OK)
+	{
+		// エラーメッセージ表示
+		std::string errstr;
+		errstr.resize(errorBlob->GetBufferSize());
+		std::copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errstr.begin());
+		errstr += "\n";
+		::OutputDebugStringA(errstr.c_str());
+		return false;
+
+	}
+
+
 	// ここでの情報がシェーダーに渡されるぞ！
 
 	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
@@ -1741,8 +1732,8 @@ bool DirectGraphics::CreatePlanePipelineState()
 	// 頂点シェーダーとピクセルシェーダーを設定
 	gpipeline.VS.pShaderBytecode = m_PlaneVertexShader->GetBufferPointer();
 	gpipeline.VS.BytecodeLength = m_PlaneVertexShader->GetBufferSize();
-	gpipeline.PS.pShaderBytecode = m_pPsShader->GetBufferPointer();
-	gpipeline.PS.BytecodeLength = m_pPsShader->GetBufferSize();
+	gpipeline.PS.pShaderBytecode = m_PlanePixelShader->GetBufferPointer();
+	gpipeline.PS.BytecodeLength = m_PlanePixelShader->GetBufferSize();
 
 	// サンプルマスク・ラスタライザーの設定
 	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
@@ -1829,260 +1820,35 @@ void DirectGraphics::setViewPort()
 	m_scissorrect.bottom = m_scissorrect.top + WINDOW_HEIGHT;
 }
 
-void DirectGraphics::CreatePeraResource()
+/*
+bool DirectGraphics::CreateDepthSRVHeapAndView()
 {
-	auto heapDesc = m_rtvHeaps->GetDesc();
-
-	auto& bbuff = m_backBuffers[0];
-	auto resDesc = bbuff->GetDesc();
-
-	D3D12_HEAP_PROPERTIES heapProp =
-		CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-
-	float clsClr[4] = { 0.5,0.5,0.5,1.0 };
-	D3D12_CLEAR_VALUE clearValue = CD3DX12_CLEAR_VALUE(
-		DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, clsClr
-	);
-
-	auto result = m_device->CreateCommittedResource(
-		&heapProp,
-		D3D12_HEAP_FLAG_NONE,
-		&resDesc,
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-		&clearValue,
-		IID_PPV_ARGS(m_peraResource.ReleaseAndGetAddressOf())
-	);
-}
-
-void DirectGraphics::CreatePeraViewes()
-{
-	auto heapDesc = m_rtvHeaps->GetDesc();
-
-	heapDesc.NumDescriptors = 1;
-	auto result = m_device->CreateDescriptorHeap(
-		&heapDesc,
-		IID_PPV_ARGS(m_peraRTVHeap.ReleaseAndGetAddressOf())
-	);
-
-	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-
-	m_device->CreateRenderTargetView(
-		m_peraResource.Get(),
-		&rtvDesc,
-		m_peraRTVHeap->GetCPUDescriptorHandleForHeapStart()
-	);
-
+	// 深度値テクスチャ用のヒープを作る
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	heapDesc.NodeMask = 0;
 	heapDesc.NumDescriptors = 1;
 	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-	result = m_device->CreateDescriptorHeap(
-		&heapDesc,
-		IID_PPV_ARGS(m_peraSRVHeap.ReleaseAndGetAddressOf())
+	auto result = m_device->CreateDescriptorHeap(
+		&heapDesc, IID_PPV_ARGS(&m_PlaneDepthSRVHeap)
 	);
 
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Format = rtvDesc.Format;
-	srvDesc.Texture2D.MipLevels = 1;
-
-	srvDesc.Shader4ComponentMapping =
-		D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-	m_device->CreateShaderResourceView(
-		m_peraResource.Get(),
-		&srvDesc,
-		m_peraSRVHeap->GetCPUDescriptorHandleForHeapStart()
-	);
-}
-
-void DirectGraphics::CreatePeraVertex()
-{
-	// 頂点バッファの作成
-	CD3DX12_HEAP_PROPERTIES prop = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	CD3DX12_RESOURCE_DESC buf = CD3DX12_RESOURCE_DESC::Buffer(sizeof(pv));
-
-	auto result = m_device->CreateCommittedResource(
-		&prop,
-		D3D12_HEAP_FLAG_NONE,
-		&buf,
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(m_peraVB.ReleaseAndGetAddressOf())
-	);
-
-	m_peraVBV.BufferLocation = m_peraVB->GetGPUVirtualAddress();
-	m_peraVBV.SizeInBytes = sizeof(pv);
-	m_peraVBV.StrideInBytes = sizeof(Vertex);
-
-	Vertex* mappedPera = nullptr;
-	m_peraVB->Map(0, nullptr, (void**)&mappedPera);
-	std::copy(std::begin(pv), std::end(pv), mappedPera);
-	m_peraVB->Unmap(0, nullptr);
-}
-
-void DirectGraphics::CreatePeraIndexLayout()
-{
-	D3D12_INPUT_ELEMENT_DESC layout[] =
+	if (result != S_OK)
 	{
-		// 頂点情報
-		{
-			"POSITION",									// セマンティクス
-			0,
-			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
-			0,											// 入力スロットインデックス
-			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
-			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
-			0
-		},
-		// 法線情報
-		{
-			"NORMAL",									// セマンティクス
-			0,
-			DXGI_FORMAT_R32G32B32_FLOAT,				// フォーマット
-			0,											// 入力スロットインデックス
-			D3D12_APPEND_ALIGNED_ELEMENT,				// データの並びかた
-			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,	// 一頂点毎にこのレイアウトが入っている
-			0
-		},
-		// UV情報
-		{
-			"TEXCOORD",
-			0,
-			DXGI_FORMAT_R32G32_FLOAT,					// 情報はXMFLOAT2なので二つぶん
-			0,
-			D3D12_APPEND_ALIGNED_ELEMENT,
-			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-			0
-		},
-	};
-
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC gpsDesc = {};
-	gpsDesc.InputLayout.NumElements = _countof(layout);
-	gpsDesc.InputLayout.pInputElementDescs = layout;
-
-	// シェーダーも作る(あとで関数名を変更する)
-	ComPtr<ID3DBlob> errBlob;
-
-	auto result = D3DCompileFromFile(
-		L"shadowMapVertex.hlsl",
-		nullptr,
-		D3D_COMPILE_STANDARD_FILE_INCLUDE,
-		"vs",
-		"vs_5_0",
-		0, 0,
-		m_PlaneVertexShader.ReleaseAndGetAddressOf(),
-		errBlob.ReleaseAndGetAddressOf()
-	);
-
-	result = D3DCompileFromFile(
-		L"shadowMapPixel.hlsl",
-		nullptr,
-		D3D_COMPILE_STANDARD_FILE_INCLUDE,
-		"ps",
-		"ps_5_0",
-		0,
-		0,
-		m_PlanePixelShader.ReleaseAndGetAddressOf(),
-		errBlob.ReleaseAndGetAddressOf()
-	);
-
-	gpsDesc.VS = CD3DX12_SHADER_BYTECODE(m_PlaneVertexShader.Get());
-	gpsDesc.PS = CD3DX12_SHADER_BYTECODE(m_PlanePixelShader.Get());
-
-	gpsDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-	gpsDesc.PrimitiveTopologyType =
-		D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	gpsDesc.NumRenderTargets = 1;
-	gpsDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-	gpsDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	gpsDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
-	gpsDesc.SampleDesc.Count = 1;
-	gpsDesc.SampleDesc.Quality = 0;
-	gpsDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
-
-	D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
-	rsDesc.NumParameters = 0;
-	rsDesc.NumStaticSamplers = 0;
-	rsDesc.Flags =
-		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-	result = D3D12SerializeRootSignature(
-		&rsDesc,
-		D3D_ROOT_SIGNATURE_VERSION_1,
-		m_rsBlob.ReleaseAndGetAddressOf(),
-		errBlob.ReleaseAndGetAddressOf()
-	);
-
-	result = m_device->CreateRootSignature(
-		0,
-		m_rsBlob->GetBufferPointer(),
-		m_rsBlob->GetBufferSize(),
-		IID_PPV_ARGS(m_peraRS.ReleaseAndGetAddressOf())
-	);
-
-	gpsDesc.pRootSignature = m_peraRS.Get();
-	result = m_device->CreateGraphicsPipelineState(
-		&gpsDesc,
-		IID_PPV_ARGS(m_peraPipeline.ReleaseAndGetAddressOf())
-	);
-}
-
-void DirectGraphics::RenderShadowMap()
-{
-	CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_peraResource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-	m_cmdList->ResourceBarrier(1, &barrier);
-
-	m_cmdList->SetPipelineState(m_peraPipeline.Get());
-
-	auto rtvH = m_peraRTVHeap->GetCPUDescriptorHandleForHeapStart();
-
-	auto dsvH = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
-
-	m_cmdList->OMSetRenderTargets(1, &rtvH, false, &dsvH);
-
-	float clsClr[4] = { 0.5,0.5,0.5,1.0 };
-
-	m_cmdList->ClearRenderTargetView(rtvH, clsClr, 0, nullptr); // 画面クリア
-
-	m_cmdList->ClearDepthStencilView(dsvH, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
-	m_cmdList->RSSetViewports(1, &m_viewport);
-
-	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
-
-	m_cmdList->SetGraphicsRootSignature(m_peraRS.Get());
-
-	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-
-	m_cmdList->IASetVertexBuffers(0, 1, &m_peraVBV);
-
-	m_cmdList->DrawInstanced(4, 1, 0, 0);
-
-	barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_peraResource.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	m_cmdList->ResourceBarrier(1, &barrier);
-
-	m_cmdList->Close(); // 実行前には必ずクローズすること！
-
-	ID3D12CommandList* cmdLists[] = { m_cmdList.Get() };
-	m_cmdQueue->ExecuteCommandLists(1, cmdLists);
-
-	m_cmdQueue->Signal(m_fence.Get(), ++m_fenceVal);
-
-	if (m_fence->GetCompletedValue() != m_fenceVal)
-	{
-		auto event = CreateEvent(nullptr, false, false, nullptr);
-
-		m_fence->SetEventOnCompletion(m_fenceVal, event);
-
-		WaitForSingleObject(event, INFINITE);
-
-		CloseHandle(event);
+		return false;
 	}
 
-	m_cmdAllocator->Reset();
-	m_cmdList->Reset(m_cmdAllocator.Get(), nullptr);
+	// 深度値テクスチャ用のビューを作る
+	D3D12_SHADER_RESOURCE_VIEW_DESC resDesc = {};
+	resDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	resDesc.Texture2D.MipLevels = 1;
+	resDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	resDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	auto handle = m_PlaneDepthSRVHeap->GetCPUDescriptorHandleForHeapStart();
 
+	m_device->CreateShaderResourceView(m_depthBuff.Get(), &resDesc, handle);
+
+	return true;
 }
+*/
