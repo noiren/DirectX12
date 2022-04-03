@@ -11,10 +11,16 @@ float4 BasicPS(Output input) : SV_TARGET
 float4 PlanePS(Output input) : SV_TARGET
 {
 	// ‚¿‚å‚Á‚Æ”Z‚¢‚ß‚É‚µ‚Äo—Í
-	float dep = pow(depthTex.Sample(smp,input.uv),20);
+	float Cubedep = lightDepthTex.Sample(smp,input.uv);
+	float LightDep = lightPeraDepthTex.Sample(smp, input.uv);
+
+	float dep = 1.f;
+	if (Cubedep < LightDep)
+	{
+		dep = 0.0f;
+	}
 	return float4(dep, dep, dep, 1);
 }
-
 
 
 //float3 lightPower = float3(0.f, 0.f, 10.0f);

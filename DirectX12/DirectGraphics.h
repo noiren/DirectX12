@@ -53,6 +53,7 @@ public:
 		XMMATRIX world;
 		XMMATRIX viewproj;
 		XMMATRIX lightCamera; // カメラから見たビュー
+		XMFLOAT3 lightPos;
 	};
 
 	struct TexRGBA {
@@ -147,15 +148,19 @@ private:
 	// シャドウマップ用深度バッファ
 	ComPtr<ID3D12Resource> m_lightDepthBuffer;
 
+	ComPtr<ID3D12Resource> m_PlaneLightDepthBuffer;
+
 	ComPtr<ID3D12PipelineState> m_shadowPipeline;
 
 	XMMATRIX m_worldMat; // ワールド行列
 	XMMATRIX m_viewMat; // ビュー行列
 	XMMATRIX m_projMat; // プロジェクション行列
+	XMMATRIX m_lightViewMat; // ライトビュー行列
 
 	XMMATRIX m_planeWorldMat;
 	XMMATRIX m_planeViewMat;
 	XMMATRIX m_planeProjMat;
+	XMFLOAT3 m_lightPos;
 
 	MatricesData* m_constMapMatrix; // マップしたマップ行列
 
@@ -186,6 +191,7 @@ private:
 	XMFLOAT3 m_eye;
 	XMFLOAT3 m_target;
 	XMFLOAT3 m_up;
+	XMFLOAT3 m_lighteye;
 
 	Input* m_directInput;
 

@@ -273,6 +273,9 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->ResourceBarrier(1, &BarrierDesc);
 
+	// 1パス目
+	// ライト座標から見た時の深度値をテクスチャに書き出す
+
 	m_cmdList->SetPipelineState(m_shadowPipeline.Get());
 
 	m_cmdList->SetGraphicsRootSignature(m_pRootSignature.Get()); // ルートシグネチャの設定
@@ -293,8 +296,30 @@ bool DirectGraphics::SetupSwapChain()
 
 	m_cmdList->ClearDepthStencilView(handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
+	m_cmdList->RSSetViewports(1, &m_viewport);
+
+	m_cmdList->RSSetScissorRects(1, &m_scissorrect);
+
+	m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);// プリミティブトポロジの設定
+
+	m_cmdList->IASetVertexBuffers(0, 1, &m_vbView);
+
+	m_cmdList->IASetIndexBuffer(&m_ibView);
+
 	// ライト深度テクスチャ
 	m_cmdList->DrawIndexedInstanced(indexSize, 1, 0, 0, 0);
+
+	handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+	m_cmdList->OMSetRenderTargets(0, nullptr, false, &handle);
+
+	m_cmdList->ClearDepthStencilView(handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+	m_cmdList->IASetVertexBuffers(0, 1, &m_PlaneVbView);// 頂点バッファビューの設定
+
+	m_cmdList->IASetIndexBuffer(&m_PlaneIbView);// インデックスバッファビューの設定
+
+	m_cmdList->DrawIndexedInstanced(planeIndexSize, 1, 0, 0, 0);
 
 	m_cmdList->SetPipelineState(m_pPipelineState.Get()); // パイプラインステートの設定
 
@@ -331,7 +356,7 @@ bool DirectGraphics::SetupSwapChain()
 	m_cmdList->IASetIndexBuffer(&m_PlaneIbView);// インデックスバッファビューの設定(1回に設定できるインデックスバッファーは1つだけ)
 
 	m_cmdList->DrawIndexedInstanced(planeIndexSize, 1, 0, 0, 0);
-
+	
 	RenderText();
 
 	// コマンドリストの実行
@@ -440,19 +465,24 @@ void DirectGraphics::SetRotate()
 		m_planeSize += 0.01f;
 	}
 
-	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
+	auto light = XMFLOAT4(-1, 1, -1, 0);
+	XMVECTOR lightVec = XMLoadFloat4(&light);
 
 	auto eyePos = XMLoadFloat3(&m_eye);
 	auto targetPos = XMLoadFloat3(&m_target);
 	auto upVec = XMLoadFloat3(&m_up);
-	auto light = XMFLOAT4(-1, 1, -1, 0);
-	XMVECTOR lightVec = XMLoadFloat4(&light);
 
-	auto lightPos = targetPos + XMVector3Normalize(lightVec) * XMVector3Length(XMVectorSubtract(targetPos, eyePos)).m128_f32[0];
+	auto lightPos = targetPos + XMVector3Normalize(lightVec) *
+		XMVector3Length(XMVectorSubtract(targetPos, eyePos)).m128_f32[0];
+
+	m_lightViewMat = XMMatrixLookAtLH(lightPos, targetPos, upVec);
+
+
+	m_worldMat = XMMatrixScaling(m_size, m_size, m_size) * XMMatrixRotationX(m_angleX * (XM_PI / 180)) * XMMatrixRotationY(m_angleY * (XM_PI / 180)) * XMMatrixTranslation(m_pos.x, m_pos.y, 0);
 
 	m_constMapMatrix->world = m_worldMat;
 	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
-	m_constMapMatrix->lightCamera = XMMatrixLookAtLH(lightPos, targetPos, upVec) * XMMatrixOrthographicLH(40, 40, 1.0f, 100.f);
+	m_constMapMatrix->lightCamera = m_lightViewMat * XMMatrixOrthographicLH(40, 40, 1.0f, 10.f);
 
 	m_planeWorldMat = XMMatrixScaling(3.5f, 3.5f, 3.5f) * XMMatrixRotationX(45 * (XM_PI / 180)) * XMMatrixRotationY(135 * (XM_PI / 180)) * XMMatrixTranslation(0.f, -3.15f, 0.f);
 	m_constPlaneMapMatrix->world = m_planeWorldMat;
@@ -1044,8 +1074,19 @@ bool DirectGraphics::CreateConstantBuffer()
 
 	m_up = XMFLOAT3(0, 1, 0);		// 上ベクトル
 
+	auto light = XMFLOAT4(-1, 1, -1, 0);
+	XMVECTOR lightVec = XMLoadFloat4(&light);
+
+	auto eyePos = XMLoadFloat3(&m_eye);
+	auto targetPos = XMLoadFloat3(&m_target);
+	auto upVec = XMLoadFloat3(&m_up);
+
+	auto lightPos = targetPos + XMVector3Normalize(lightVec) *
+		XMVector3Length(XMVectorSubtract(targetPos,eyePos)).m128_f32[0];
+
 	// ビュー行列
 	m_viewMat = XMMatrixLookAtLH(XMLoadFloat3(&m_eye), XMLoadFloat3(&m_target), XMLoadFloat3(&m_up));
+	m_lightViewMat = XMMatrixLookAtLH(lightPos,targetPos,upVec);
 	//matrix *= m_viewMat;
 
 	// プロジェクション行列
@@ -1078,6 +1119,7 @@ bool DirectGraphics::CreateConstantBuffer()
 	result = m_constBuff->Map(0, nullptr, (void**)&m_constMapMatrix);
 	m_constMapMatrix->world = m_worldMat;
 	m_constMapMatrix->viewproj = m_viewMat * m_projMat;
+	m_constMapMatrix->lightCamera = m_lightViewMat * XMMatrixOrthographicLH(40,40,1.0f,10.f);
 
 	return true;
 }
@@ -1129,6 +1171,7 @@ bool DirectGraphics::CreatePlaneConstantBuffer()
 	result = m_PlaneConstBuff->Map(0, nullptr, (void**)&m_constPlaneMapMatrix);
 	m_constPlaneMapMatrix->world = m_planeWorldMat;
 	m_constPlaneMapMatrix->viewproj = m_planeViewMat * m_planeProjMat;
+	m_constPlaneMapMatrix->lightPos = m_lighteye;
 	return true;
 }
 
@@ -1327,6 +1370,7 @@ bool DirectGraphics::CreateDepthBuffer()
 
 	result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(m_lightDepthBuffer.ReleaseAndGetAddressOf()));
 
+	result = m_device->CreateCommittedResource(&depthHeapProp, D3D12_HEAP_FLAG_NONE, &depthResDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(m_PlaneLightDepthBuffer.ReleaseAndGetAddressOf()));
 	return true;
 }
 
@@ -1338,7 +1382,7 @@ bool DirectGraphics::CreateShaderConstResourceView()
 
 	descHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	descHeapDesc.NodeMask = 0;
-	descHeapDesc.NumDescriptors = 5;
+	descHeapDesc.NumDescriptors = 6;
 	descHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;// シェーダーリソースビュー用
 
 	auto result = m_device->CreateDescriptorHeap(&descHeapDesc, IID_PPV_ARGS(m_pDescHeap.ReleaseAndGetAddressOf()));
@@ -1409,13 +1453,20 @@ bool DirectGraphics::CreateShaderConstResourceView()
 
 	m_device->CreateShaderResourceView(m_lightDepthBuffer.Get(), &resDesc, descHeapHandle);
 
+	// ライト深度値
+	descHeapHandle.ptr +=
+		m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	m_device->CreateShaderResourceView(m_PlaneLightDepthBuffer.Get(), &resDesc, descHeapHandle);
+
+
 	return true;
 }
 
 bool DirectGraphics::CreateDepthBufferView()
 {
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-	dsvHeapDesc.NumDescriptors = 2;
+	dsvHeapDesc.NumDescriptors = 3;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	auto result = m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(m_dsvHeap.ReleaseAndGetAddressOf()));
 
@@ -1440,13 +1491,17 @@ bool DirectGraphics::CreateDepthBufferView()
 
 	m_device->CreateDepthStencilView(m_lightDepthBuffer.Get(), &dsvDesc, handle);
 
+	handle.ptr += m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+	m_device->CreateDepthStencilView(m_PlaneLightDepthBuffer.Get(), &dsvDesc, handle);
+
 	return true;
 }
 
 bool DirectGraphics::CreateRootSignature()
 {
 	// ディスクリプタレンジの作成
-	D3D12_DESCRIPTOR_RANGE descTblRange[5] = {};
+	D3D12_DESCRIPTOR_RANGE descTblRange[6] = {};
 
 	// テクスチャ用レジスター0番
 	descTblRange[0].NumDescriptors = 1; // 今回使用するテクスチャは1つ
@@ -1483,6 +1538,13 @@ bool DirectGraphics::CreateRootSignature()
 	descTblRange[4].OffsetInDescriptorsFromTableStart =
 		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+	// テクスチャ用レジスター3番
+	descTblRange[5].NumDescriptors = 1;
+	descTblRange[5].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	descTblRange[5].BaseShaderRegister = 3; // t2
+	descTblRange[5].OffsetInDescriptorsFromTableStart =
+		D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
 
 	// ルートパラメーター作成
 	D3D12_ROOT_PARAMETER rootparam = {};
@@ -1492,7 +1554,7 @@ bool DirectGraphics::CreateRootSignature()
 	// 配列先頭アドレスを指定
 	rootparam.DescriptorTable.pDescriptorRanges = &descTblRange[0];
 
-	rootparam.DescriptorTable.NumDescriptorRanges = 5;
+	rootparam.DescriptorTable.NumDescriptorRanges = 6;
 
 	rootparam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
